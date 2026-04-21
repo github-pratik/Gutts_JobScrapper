@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build artifacts
+build/
+dist/
+GUTTSJobRunner.spec
+!build_config/GUTTSJobRunner.spec
+
+# App outputs
+data/output/
+data/input/*.csv
+data/input/*.xlsx
+data/input/*.xls
+
+# Local/editor
+.cursor/
+.vscode/
