@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: gutts-job-runner
+    runtime: python
+    plan: free
+    buildCommand: pip install -r app/requirements.txt
+    startCommand: streamlit run app/web_app.py --server.address 0.0.0.0 --server.port $PORT
