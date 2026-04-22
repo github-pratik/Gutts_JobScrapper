@@ -381,7 +381,21 @@ def main() -> None:
         st.info(hint)
 
     st.subheader("Effective query preview")
-    st.code(f"Primary (effective):\n{eff_primary}\n\nSecond pass (effective):\n{eff_second}", language="text")
+    preview_a, preview_b = st.columns([1, 1])
+    with preview_a:
+        st.text_area(
+            "Primary (effective)",
+            value=eff_primary,
+            height=140,
+            disabled=True,
+        )
+    with preview_b:
+        st.text_area(
+            "Second pass (effective)",
+            value=eff_second,
+            height=140,
+            disabled=True,
+        )
 
     st.subheader("Output")
     o1, o2, o3 = st.columns([3, 3, 2])
