@@ -9,9 +9,10 @@ from __future__ import annotations
 import argparse
 import csv
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+from urllib import error, request
 
 import pandas as pd
 
@@ -69,6 +70,13 @@ class ScrapeConfig:
     output_dir: str = "."
     linkedin_fetch_description: bool = False
     verbose: int = 1
+    include_keywords: str = ""
+    exclude_keywords: str = ""
+    must_have_skills: str = ""
+    min_experience_years: int | None = None
+    max_experience_years: int | None = None
+    work_modes: list[str] = field(default_factory=list)
+    include_unknown_links: bool = False
 
 
 def resolve_output_path(output: str | None, output_dir: str) -> Path:
@@ -100,12 +108,284 @@ def dedupe_by_job_url(jobs: pd.DataFrame) -> pd.DataFrame:
     return deduped
 
 
+def dedupe_jobs(jobs: pd.DataFrame, log: Callable[[str], None] | None = None) -> pd.DataFrame:
+    if jobs.empty:
+        return jobs
+
+    deduped = dedupe_by_job_url(jobs)
+    before = len(deduped)
+
+    dedupe_work = deduped.copy()
+    for col in ("job_title", "company", "location", "posted_date"):
+        if col not in dedupe_work.columns:
+            dedupe_work[col] = ""
+        dedupe_work[col] = dedupe_work[col].fillna("").astype(str).str.strip().str.lower()
+
+    missing_url = dedupe_work["job_url"].fillna("").astype(str).str.strip().eq("")
+    fallback_index = dedupe_work[missing_url].drop_duplicates(
+        subset=["job_title", "company", "location", "posted_date"],
+        keep="first",
+    ).index
+    keep_with_url = deduped[~missing_url]
+    fallback_deduped = deduped.loc[fallback_index]
+    deduped = pd.concat([keep_with_url, fallback_deduped], ignore_index=True)
+
+    if log and len(deduped) < before:
+        log(f"Fallback dedupe applied: {before} -> {len(deduped)} rows")
+    return deduped.reset_index(drop=True)
+
+
 def sort_by_recency(jobs: pd.DataFrame) -> pd.DataFrame:
     if jobs.empty or "date_posted" not in jobs.columns:
         return jobs
     return jobs.sort_values(by="date_posted", ascending=False, na_position="last").reset_index(
         drop=True
     )
+
+
+def _as_text(value: object) -> str:
+    if value is None:
+        return ""
+    if pd.isna(value):
+        return ""
+    text = str(value).replace("\r", " ").replace("\n", " ").strip()
+    return " ".join(text.split())
+
+
+def _extract_summary(description: object, max_len: int = 320) -> str:
+    text = _as_text(description)
+    if not text:
+        return ""
+    if len(text) <= max_len:
+        return text
+    return f"{text[: max_len - 3].rstrip()}..."
+
+
+def _format_salary(row: pd.Series) -> str:
+    minimum = row.get("min_amount")
+    maximum = row.get("max_amount")
+    interval = _as_text(row.get("interval"))
+    currency = _as_text(row.get("currency")) or "USD"
+
+    min_text = _as_text(minimum)
+    max_text = _as_text(maximum)
+
+    if min_text and max_text:
+        value = f"{currency} {min_text} - {max_text}"
+    elif min_text:
+        value = f"{currency} {min_text}+"
+    elif max_text:
+        value = f"Up to {currency} {max_text}"
+    else:
+        return ""
+
+    if interval:
+        return f"{value} / {interval}"
+    return value
+
+
+def _format_skills(value: object) -> str:
+    if isinstance(value, (list, tuple)):
+        return ", ".join(_as_text(v) for v in value if _as_text(v))
+    return _as_text(value)
+
+
+def _infer_work_type(row: pd.Series) -> str:
+    direct = _as_text(row.get("job_type"))
+    if direct:
+        return direct
+    location_type = _as_text(row.get("job_type_raw"))
+    if location_type:
+        return location_type
+    location = _as_text(row.get("location")).lower()
+    if "remote" in location:
+        return "Remote"
+    return ""
+
+
+def _infer_experience_text(row: pd.Series) -> str:
+    value = _as_text(row.get("experience_range"))
+    if value:
+        return value
+    level = _as_text(row.get("job_level"))
+    return level
+
+
+def _estimate_experience_years(experience_text: str) -> float | None:
+    text = experience_text.lower()
+    if not text:
+        return None
+    if "entry" in text or "fresher" in text or "intern" in text or "0-1" in text:
+        return 0.5
+    digits = []
+    current = ""
+    for ch in text:
+        if ch.isdigit():
+            current += ch
+        else:
+            if current:
+                digits.append(int(current))
+                current = ""
+    if current:
+        digits.append(int(current))
+    if digits:
+        return float(digits[0])
+    return None
+
+
+def validate_job_link(url: object, timeout_seconds: float = 6.0) -> str:
+    text = _as_text(url)
+    if not text or not text.startswith(("http://", "https://")):
+        return "unknown"
+
+    try:
+        req = request.Request(text, method="HEAD", headers={"User-Agent": "Mozilla/5.0"})
+        with request.urlopen(req, timeout=timeout_seconds) as response:
+            status = getattr(response, "status", 200)
+            return "live" if 200 <= int(status) < 400 else "dead"
+    except error.HTTPError as exc:
+        if exc.code in (401, 403, 405, 429):
+            return "unknown"
+        if exc.code in (404, 410):
+            return "dead"
+    except Exception:
+        pass
+
+    try:
+        req = request.Request(text, method="GET", headers={"User-Agent": "Mozilla/5.0"})
+        with request.urlopen(req, timeout=timeout_seconds) as response:
+            status = getattr(response, "status", 200)
+            return "live" if 200 <= int(status) < 400 else "dead"
+    except error.HTTPError as exc:
+        if exc.code in (401, 403, 429):
+            return "unknown"
+        if exc.code in (404, 410):
+            return "dead"
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _csv_skill_terms(value: str) -> list[str]:
+    return [term.strip().lower() for term in value.split(",") if term.strip()]
+
+
+def build_curated_jobs(
+    jobs: pd.DataFrame,
+    *,
+    search_query: str,
+    scraped_at: str,
+) -> pd.DataFrame:
+    def _series(column: str) -> pd.Series:
+        if column in jobs.columns:
+            return jobs[column]
+        return pd.Series([""] * len(jobs), index=jobs.index)
+
+    curated = pd.DataFrame()
+    curated["job_title"] = _series("title").map(_as_text)
+    curated["company"] = _series("company").map(_as_text)
+    curated["source_site"] = _series("site").map(_as_text)
+    posted = pd.to_datetime(_series("date_posted"), errors="coerce", utc=True)
+    curated["posted_date"] = posted.dt.strftime("%Y-%m-%d").fillna("")
+    curated["location"] = _series("location").map(_as_text)
+    curated["work_type"] = jobs.apply(_infer_work_type, axis=1)
+    curated["experience"] = jobs.apply(_infer_experience_text, axis=1)
+    curated["salary"] = jobs.apply(_format_salary, axis=1)
+    curated["skills"] = _series("skills").map(_format_skills)
+    curated["summary"] = _series("description").map(_extract_summary)
+    curated["job_url"] = _series("job_url").map(_as_text)
+    if "job_url_direct" in jobs.columns:
+        mask_missing = curated["job_url"].eq("")
+        curated.loc[mask_missing, "job_url"] = jobs.loc[mask_missing, "job_url_direct"].map(_as_text)
+    curated["search_query"] = search_query
+    curated["scraped_at"] = scraped_at
+    return curated
+
+
+def apply_structured_filters(
+    curated_jobs: pd.DataFrame,
+    config: ScrapeConfig,
+) -> pd.DataFrame:
+    filtered = curated_jobs.copy()
+    if filtered.empty:
+        return filtered
+
+    include_keywords = [kw.strip().lower() for kw in config.include_keywords.split(",") if kw.strip()]
+    exclude_keywords = [kw.strip().lower() for kw in config.exclude_keywords.split(",") if kw.strip()]
+    must_skills = _csv_skill_terms(config.must_have_skills)
+    work_modes = [mode.strip().lower() for mode in config.work_modes if mode.strip()]
+
+    searchable = (
+        filtered["job_title"].fillna("")
+        + " "
+        + filtered["summary"].fillna("")
+        + " "
+        + filtered["skills"].fillna("")
+    ).str.lower()
+
+    for kw in include_keywords:
+        filtered = filtered[searchable.str.contains(kw, na=False)]
+        searchable = searchable.loc[filtered.index]
+
+    for kw in exclude_keywords:
+        filtered = filtered[~searchable.str.contains(kw, na=False)]
+        searchable = searchable.loc[filtered.index]
+
+    if must_skills:
+        skills_text = filtered["skills"].fillna("").str.lower()
+        for skill in must_skills:
+            filtered = filtered[skills_text.str.contains(skill, na=False)]
+            skills_text = skills_text.loc[filtered.index]
+
+    if config.min_experience_years is not None or config.max_experience_years is not None:
+        years = filtered["experience"].fillna("").map(_estimate_experience_years)
+        if config.min_experience_years is not None:
+            filtered = filtered[
+                years.isna() | (years >= float(config.min_experience_years))
+            ]
+            years = years.loc[filtered.index]
+        if config.max_experience_years is not None:
+            filtered = filtered[
+                years.isna() | (years <= float(config.max_experience_years))
+            ]
+
+    if work_modes:
+        work_text = (
+            filtered["work_type"].fillna("").str.lower() + " " + filtered["location"].fillna("").str.lower()
+        )
+        mode_mask = pd.Series(False, index=filtered.index)
+        for mode in work_modes:
+            mode_mask = mode_mask | work_text.str.contains(mode, na=False)
+        filtered = filtered[mode_mask]
+
+    return filtered.reset_index(drop=True)
+
+
+def enforce_recency(
+    curated_jobs: pd.DataFrame,
+    *,
+    max_age_days: int,
+    now_utc: datetime | None = None,
+) -> pd.DataFrame:
+    if curated_jobs.empty:
+        return curated_jobs
+
+    now = now_utc or datetime.now(timezone.utc)
+    posted = pd.to_datetime(curated_jobs.get("posted_date"), errors="coerce", utc=True)
+    age_days = (now - posted).dt.total_seconds() / 86400.0
+    keep_mask = posted.notna() & (age_days <= max_age_days)
+    return curated_jobs[keep_mask].reset_index(drop=True)
+
+
+def apply_link_status_filter(
+    curated_jobs: pd.DataFrame,
+    *,
+    include_unknown_links: bool,
+) -> pd.DataFrame:
+    if curated_jobs.empty:
+        return curated_jobs
+    allowed = ["live", "unknown"] if include_unknown_links else ["live"]
+    return curated_jobs[curated_jobs["link_status"].isin(allowed)].reset_index(drop=True)
 
 
 def run_one_scrape(
@@ -153,6 +433,13 @@ def config_from_args(args: argparse.Namespace) -> ScrapeConfig:
         output_dir=args.output_dir,
         linkedin_fetch_description=args.linkedin_fetch_description,
         verbose=args.verbose,
+        include_keywords=getattr(args, "include_keywords", ""),
+        exclude_keywords=getattr(args, "exclude_keywords", ""),
+        must_have_skills=getattr(args, "must_have_skills", ""),
+        min_experience_years=getattr(args, "min_experience_years", None),
+        max_experience_years=getattr(args, "max_experience_years", None),
+        work_modes=getattr(args, "work_modes", []) or [],
+        include_unknown_links=getattr(args, "include_unknown_links", False),
     )
 
 
@@ -170,6 +457,7 @@ def run_gutts_scrape(
 ) -> tuple[Path, int]:
     out_path = resolve_output_path(config.output, config.output_dir)
     google_term = _normalize_google_term(config.google_search_term)
+    max_age_days = max(1, int(config.hours_old / 24))
 
     if log:
         log("GUTTS-aligned job scrape (Plumbing / HVAC / skilled trades, wider DMV / DC metro)")
@@ -177,6 +465,10 @@ def run_gutts_scrape(
         log(
             f"sites={config.sites}, location='{config.location}' (+{config.distance} mi), "
             f"results_wanted={config.results_wanted}, multi_query={config.multi_query}"
+        )
+        log(
+            f"quality filters: latest<={max_age_days} days, "
+            f"include_unknown_links={config.include_unknown_links}"
         )
 
     passes: list[str] = [config.search_term]
@@ -200,27 +492,66 @@ def run_gutts_scrape(
             linkedin_fetch_description=config.linkedin_fetch_description,
             verbose=config.verbose,
         )
-        df["search_pass"] = term[:200] + ("..." if len(term) > 200 else "")
+        df["search_pass"] = term
         frames.append(df)
 
     jobs = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    jobs = dedupe_by_job_url(jobs)
     jobs = sort_by_recency(jobs)
 
     if log:
-        log(f"Found {len(jobs)} jobs (after merge/dedupe)")
+        log(f"Found {len(jobs)} jobs before curation")
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    jobs["scraped_at"] = timestamp
-    jobs.to_csv(
+    primary_query = passes[0] if passes else config.search_term
+    curated_jobs = build_curated_jobs(jobs, search_query=primary_query, scraped_at=timestamp)
+    curated_jobs = apply_structured_filters(curated_jobs, config)
+
+    before_recency = len(curated_jobs)
+    curated_jobs = enforce_recency(curated_jobs, max_age_days=max_age_days)
+    if log:
+        log(f"Recency filter kept {len(curated_jobs)}/{before_recency} rows")
+
+    curated_jobs["link_status"] = curated_jobs["job_url"].map(validate_job_link)
+    before_links = len(curated_jobs)
+    curated_jobs = apply_link_status_filter(
+        curated_jobs,
+        include_unknown_links=config.include_unknown_links,
+    )
+    if log:
+        log(f"Link-status filter kept {len(curated_jobs)}/{before_links} rows")
+
+    curated_jobs = dedupe_jobs(curated_jobs, log=log)
+
+    curated_columns = [
+        "job_title",
+        "company",
+        "source_site",
+        "posted_date",
+        "location",
+        "work_type",
+        "experience",
+        "salary",
+        "skills",
+        "summary",
+        "job_url",
+        "link_status",
+        "search_query",
+        "scraped_at",
+    ]
+    for col in curated_columns:
+        if col not in curated_jobs.columns:
+            curated_jobs[col] = ""
+    curated_jobs = curated_jobs[curated_columns]
+
+    curated_jobs.to_csv(
         str(out_path),
         quoting=csv.QUOTE_NONNUMERIC,
         escapechar="\\",
         index=False,
     )
     if log:
-        log(f"Saved results to {out_path}")
-    return out_path, len(jobs)
+        log(f"Saved {len(curated_jobs)} curated rows to {out_path}")
+    return out_path, len(curated_jobs)
 
 
 def parse_args() -> argparse.Namespace:
@@ -323,6 +654,44 @@ def parse_args() -> argparse.Namespace:
         default=1,
         choices=[0, 1, 2],
         help="JobSpy log level: 0 errors only, 1 + warnings, 2 all (default: 1).",
+    )
+    parser.add_argument(
+        "--include-keywords",
+        default="",
+        help="Comma-separated include keywords for post-scrape filtering.",
+    )
+    parser.add_argument(
+        "--exclude-keywords",
+        default="",
+        help="Comma-separated exclude keywords for post-scrape filtering.",
+    )
+    parser.add_argument(
+        "--must-have-skills",
+        default="",
+        help="Comma-separated skills required in the extracted skills column.",
+    )
+    parser.add_argument(
+        "--min-experience-years",
+        type=int,
+        default=None,
+        help="Minimum years of experience to keep (based on parsed experience text).",
+    )
+    parser.add_argument(
+        "--max-experience-years",
+        type=int,
+        default=None,
+        help="Maximum years of experience to keep (based on parsed experience text).",
+    )
+    parser.add_argument(
+        "--work-modes",
+        nargs="+",
+        default=[],
+        help="Allowed work modes: remote hybrid onsite.",
+    )
+    parser.add_argument(
+        "--include-unknown-links",
+        action="store_true",
+        help="Include unknown (unverified) links in output in addition to live links.",
     )
     return parser.parse_args()
 

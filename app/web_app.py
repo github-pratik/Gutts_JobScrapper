@@ -21,6 +21,7 @@ SITE_CHOICES = [
 ]
 
 COUNTRY_CHOICES = ["USA", "Canada", "UK", "India", "Australia"]
+WORK_MODE_CHOICES = ["remote", "hybrid", "onsite"]
 
 MANUAL_FILTER_SITE_SET = {"indeed", "zip_recruiter", "linkedin"}
 
@@ -158,6 +159,32 @@ def apply_strict_filter(term: str, strict_entry: bool) -> str:
     return f"{term} {STRICT_ENTRY_EXCLUSIONS}".strip()
 
 
+def _split_csv_terms(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _format_for_query(value: str) -> str:
+    if " " in value and not (value.startswith('"') and value.endswith('"')):
+        return f'"{value}"'
+    return value
+
+
+def add_structured_terms_to_query(base_term: str, include_terms: str, exclude_terms: str) -> str:
+    term = base_term.strip()
+    include_values = _split_csv_terms(include_terms)
+    exclude_values = _split_csv_terms(exclude_terms)
+
+    for value in include_values:
+        token = _format_for_query(value)
+        term = f"{term} {token}".strip()
+
+    for value in exclude_values:
+        token = _format_for_query(value)
+        term = f'{term} -{token}'.strip()
+
+    return term
+
+
 def effective_terms() -> tuple[str, str]:
     primary = st.session_state.primary_keywords.strip()
     second = st.session_state.second_keywords.strip()
@@ -167,7 +194,38 @@ def effective_terms() -> tuple[str, str]:
     second = apply_target_filter(second, target_name)
     primary = apply_strict_filter(primary, strict_entry)
     second = apply_strict_filter(second, strict_entry)
+    primary = add_structured_terms_to_query(
+        primary,
+        st.session_state.include_keywords,
+        st.session_state.exclude_keywords,
+    )
+    second = add_structured_terms_to_query(
+        second,
+        st.session_state.include_keywords,
+        st.session_state.exclude_keywords,
+    )
     return primary, second
+
+
+def get_experience_bounds() -> tuple[int | None, int | None]:
+    min_val = st.session_state.exp_min
+    max_val = st.session_state.exp_max
+    min_exp = None if min_val == "Any" else int(min_val)
+    max_exp = None if max_val == "Any" else int(max_val)
+    if min_exp is not None and max_exp is not None and min_exp > max_exp:
+        min_exp, max_exp = max_exp, min_exp
+    return min_exp, max_exp
+
+
+def get_query_validation_hints(primary_query: str) -> list[str]:
+    hints: list[str] = []
+    if len(primary_query.strip()) < 8:
+        hints.append("Primary query looks too short. Add role and skill keywords.")
+    if len(_split_csv_terms(st.session_state.include_keywords)) == 0:
+        hints.append("Tip: Add include keywords to improve search precision.")
+    if st.session_state.results > 200:
+        hints.append("Large result limits may increase duplicates and slower runs.")
+    return hints
 
 
 def init_state() -> None:
@@ -197,6 +255,13 @@ def init_state() -> None:
     st.session_state.last_output_path = ""
     st.session_state.last_row_count = 0
     st.session_state.last_error = ""
+    st.session_state.include_keywords = ""
+    st.session_state.exclude_keywords = ""
+    st.session_state.must_have_skills = ""
+    st.session_state.exp_min = "Any"
+    st.session_state.exp_max = "Any"
+    st.session_state.work_modes = []
+    st.session_state.include_unknown_links = False
     st.session_state._initialized = True
 
 
@@ -264,12 +329,57 @@ def main() -> None:
     if not selected_sites:
         st.warning("Select at least one site before running.")
 
+    st.subheader("Search and filter controls")
+    q1, q2 = st.columns([1, 1])
+    with q1:
+        st.text_input(
+            "Include keywords (comma-separated)",
+            key="include_keywords",
+            help="These terms are added to the search query and used in post-filtering.",
+        )
+    with q2:
+        st.text_input(
+            "Exclude keywords (comma-separated)",
+            key="exclude_keywords",
+            help="These terms are excluded from query and filtered from results.",
+        )
+
+    q3, q4, q5 = st.columns([2, 1, 1])
+    with q3:
+        st.text_input(
+            "Must-have skills (comma-separated)",
+            key="must_have_skills",
+            help="Results must contain these skills in extracted skills text.",
+        )
+    with q4:
+        st.selectbox("Min experience (years)", ["Any", 0, 1, 2, 3, 4, 5, 7, 10], key="exp_min")
+    with q5:
+        st.selectbox("Max experience (years)", ["Any", 0, 1, 2, 3, 4, 5, 7, 10], key="exp_max")
+
+    q6, q7 = st.columns([2, 1])
+    with q6:
+        st.multiselect(
+            "Work mode filter",
+            options=WORK_MODE_CHOICES,
+            key="work_modes",
+            help="Keep only jobs matching these work arrangements.",
+        )
+    with q7:
+        st.checkbox(
+            "Include unknown links",
+            key="include_unknown_links",
+            help="Keep links we cannot verify as live. Default is off for stricter quality.",
+        )
+
     with st.expander("Manual keyword editor (optional)", expanded=st.session_state.show_manual_editor):
-        st.session_state.show_manual_editor = True
         st.text_area("Primary keywords", key="primary_keywords", height=140)
         st.text_area("Second-pass keywords", key="second_keywords", height=120)
+        st.text_input("Google Jobs override query (optional)", key="google_override")
 
     eff_primary, eff_second = effective_terms()
+    for hint in get_query_validation_hints(eff_primary):
+        st.info(hint)
+
     st.subheader("Effective query preview")
     st.code(f"Primary (effective):\n{eff_primary}\n\nSecond pass (effective):\n{eff_second}", language="text")
 
@@ -290,11 +400,16 @@ def main() -> None:
         if not selected_sites:
             st.error("Please select at least one job board.")
             st.stop()
+        if not eff_primary.strip():
+            st.error("Primary query is empty. Please add keywords.")
+            st.stop()
         logs: list[str] = []
 
         def log(msg: str) -> None:
             logs.append(str(msg))
             log_box.code("\n".join(logs[-300:]), language="text")
+
+        min_experience_years, max_experience_years = get_experience_bounds()
 
         config = ScrapeConfig(
             search_term=eff_primary,
@@ -311,6 +426,13 @@ def main() -> None:
             output_dir=st.session_state.output_dir.strip() or ".",
             linkedin_fetch_description=bool(st.session_state.linkedin_fetch),
             verbose=int(st.session_state.verbose),
+            include_keywords=st.session_state.include_keywords.strip(),
+            exclude_keywords=st.session_state.exclude_keywords.strip(),
+            must_have_skills=st.session_state.must_have_skills.strip(),
+            min_experience_years=min_experience_years,
+            max_experience_years=max_experience_years,
+            work_modes=st.session_state.work_modes,
+            include_unknown_links=bool(st.session_state.include_unknown_links),
         )
 
         try:
