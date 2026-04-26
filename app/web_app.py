@@ -26,43 +26,42 @@ WORK_MODE_CHOICES = ["remote", "hybrid", "onsite"]
 MANUAL_FILTER_SITE_SET = {"indeed", "zip_recruiter", "linkedin"}
 
 FAIRFAX_COMBINED_PRIMARY = (
-    '("plumbing helper" OR "plumbing apprentice" OR "entry-level plumber" OR "plumber i" '
-    'OR "pipe-layer" OR "service plumber" OR "maintenance technician" OR "helper apprentice" '
-    'OR "building engineer helper" OR "building engineer apprentice" OR "hvac technician" '
-    'OR "hvac tech" OR "hvac helper" OR "hvac apprentice" OR "hvac maintenance" '
-    'OR "hvac service" OR "commercial hvac" OR "refrigeration tech" OR "fridge tech") '
-    '("new construction" OR "service company" OR "property management" OR maintenance '
-    'OR "data center") -software -developer -IT -sales'
+    '(("plumbing apprentice" OR "apprentice plumber" OR "plumber helper" OR "service plumber") '
+    'OR ("hvac apprentice" OR "hvac helper" OR "hvac technician" OR "refrigeration technician")) '
+    '(install OR service OR maintenance OR troubleshooting) '
+    '(construction OR "property management" OR facilities OR "data center" OR "commercial hvac" '
+    'OR "residential hvac") '
+    '-software -developer -IT -sales -marketing -dispatcher'
 )
 
 FAIRFAX_COMBINED_SECONDARY = (
-    '("plumbing" OR "plumbing helper" OR "plumbing apprentice" OR "plumber i" OR "service plumber" '
-    'OR "hvac" OR "hvac helper" OR "hvac apprentice" OR "hvac service" OR "commercial hvac" '
-    'OR "refrigeration tech" OR "building engineer helper" OR "building engineer apprentice") '
-    '(apprentice OR helper OR "entry level" OR trainee OR "willing to train") '
-    '("new construction" OR "property management" OR "data center") -software -developer -IT'
+    '("maintenance technician" OR "building engineer" OR "service technician" OR "pipefitter" '
+    'OR "sheet metal mechanic" OR "hvacr technician") '
+    '(apprentice OR helper OR trainee OR "entry level") '
+    '(commercial OR residential OR facilities OR contractor OR "property management") '
+    '-software -developer -IT -sales -marketing'
 )
 
 FAIRFAX_PLUMBING_PRIMARY = (
-    '("plumbing" OR "plumbing helper" OR "plumbing apprentice" OR "plumber i" '
-    'OR "entry-level plumber" OR "pipe-layer" OR "service plumber" '
-    'OR "maintenance technician" OR "building engineer helper" OR "building engineer apprentice") '
-    '("new construction" OR "service company" OR "property management" OR maintenance '
-    'OR "data center") -software -developer -IT'
+    '("plumbing apprentice" OR "apprentice plumber" OR "plumber helper" OR "entry level plumber" '
+    'OR "service plumber" OR "plumber trainee") '
+    '(install OR repair OR maintenance OR troubleshooting) '
+    '(construction OR "property management" OR facilities OR residential OR commercial) '
+    '-software -developer -IT -sales -marketing'
 )
 
 FAIRFAX_HVAC_PRIMARY = (
-    '("hvac" OR "hvac technician" OR "hvac tech" OR "hvac helper" OR "hvac apprentice" '
-    'OR "hvac maintenance" OR "hvac service" OR "commercial hvac" OR "maintenance technician" '
-    'OR "refrigeration tech" OR "fridge tech" OR "building engineer helper" OR "building engineer apprentice") '
-    '("new construction" OR "service company" OR "property management" OR maintenance '
-    'OR "data center") -software -developer -IT'
+    '("hvac apprentice" OR "hvac helper" OR "hvac technician" OR "entry level hvac" '
+    'OR "refrigeration technician" OR "hvacr technician") '
+    '(install OR service OR maintenance OR troubleshooting) '
+    '("commercial hvac" OR "residential hvac" OR facilities OR construction OR "property management") '
+    '-software -developer -IT -sales -marketing'
 )
 
 STRICT_ENTRY_EXCLUSIONS = (
     "-manager -supervisor -director -lead -senior -sr -principal "
     "-foreman -estimator -projectmanager -\"project manager\" -\"service manager\" "
-    "-\"operations manager\" -\"maintenance manager\""
+    "-\"operations manager\" -\"maintenance manager\" -sales -marketing -dispatcher"
 )
 
 EMPLOYMENT_TARGET_TERMS: dict[str, str] = {

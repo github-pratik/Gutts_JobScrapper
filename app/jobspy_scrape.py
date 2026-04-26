@@ -21,20 +21,21 @@ from jobspy import scrape_jobs
 # GUTTS placement focus: plumbing, HVAC, apprentices/helpers/entry-level trade roles.
 # Indeed searches title + description; use OR groups and quoted phrases as needed.
 GUTTS_DEFAULT_SEARCH = (
-    '(plumber OR plumbing OR HVAC OR HVACR OR "sheet metal" OR pipefitter OR steamfitter '
-    'OR "commercial HVAC" OR "residential HVAC" OR boilermaker OR apprentice) '
-    '(apprentice OR "entry level" OR helper OR trainee OR installer OR technician '
-    'OR "field service" OR journeyman) '
-    '-software -developer -IT -python -java'
+    '(("plumbing apprentice" OR "apprentice plumber" OR "plumber helper" OR "service plumber") '
+    'OR ("hvac apprentice" OR "hvac helper" OR "hvac technician" OR "refrigeration technician")) '
+    '(install OR service OR maintenance OR troubleshooting) '
+    '(construction OR "property management" OR facilities OR "data center" OR "commercial hvac" '
+    'OR "residential hvac") '
+    '-software -developer -IT -sales -marketing -dispatcher'
 )
 
 # Second pass: complementary keywords so different boards surface different postings.
 GUTTS_SECOND_PASS_SEARCH = (
-    '(HVAC OR HVACR OR refrigeration OR chiller OR boiler OR "service technician" '
-    'OR "maintenance technician" OR "building engineer" OR controls) '
-    '(apprentice OR installer OR mechanic OR trainee OR helper OR "route technician") '
-    'OR (mechanical OR contractor OR "facilities") (plumber OR plumbing) apprentice '
-    '-software -developer -IT'
+    '("maintenance technician" OR "building engineer" OR "service technician" '
+    'OR "pipefitter" OR "sheet metal mechanic" OR "hvacr technician") '
+    '(apprentice OR helper OR trainee OR "entry level") '
+    '(commercial OR residential OR facilities OR contractor) '
+    '-software -developer -IT -sales -marketing'
 )
 
 # DC metro centroid + wide radius covers NOVA, DC, MD suburbs, and more of the region.
