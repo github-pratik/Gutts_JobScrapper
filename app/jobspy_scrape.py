@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,6 +80,16 @@ class ScrapeConfig:
     max_experience_years: int | None = None
     work_modes: list[str] = field(default_factory=list)
     include_unknown_links: bool = False
+    # Extra jobspy params (passed through to scrape_jobs when set)
+    job_type: str | None = None
+    enforce_annual_salary: bool = False
+    user_agent: str | None = None
+    proxies: list[str] | None = None
+    # LLM relevance scoring (provider-agnostic via OpenAI-compatible API)
+    score_with_llm: bool = False
+    llm_score_threshold: int = 0
+    llm_provider: str = "groq"          # "groq" | "gemini" | "openrouter"
+    llm_model: str | None = None        # None = sensible default per provider
 
 
 def resolve_output_path(output: str | None, output_dir: str) -> Path:
@@ -389,6 +401,180 @@ def apply_link_status_filter(
     return curated_jobs[curated_jobs["link_status"].isin(allowed)].reset_index(drop=True)
 
 
+# ── LLM relevance scoring (provider-agnostic) ────────────────────────────────
+
+# Supported providers → (base_url, env_key, default_model)
+# All use the OpenAI Chat Completions format so a single `openai` SDK handles
+# every provider — just swap base_url + api_key.
+_LLM_PROVIDERS: dict[str, tuple[str, str, str]] = {
+    "groq": (
+        "https://api.groq.com/openai/v1",
+        "GROQ_API_KEY",
+        "llama-3.3-70b-versatile",
+    ),
+    "gemini": (
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "GEMINI_API_KEY",
+        "gemini-2.0-flash",
+    ),
+    "openrouter": (
+        "https://openrouter.ai/api/v1",
+        "OPENROUTER_API_KEY",
+        "meta-llama/llama-3.3-70b-instruct:free",
+    ),
+}
+
+_GUTTS_SCORE_SYSTEM = """\
+You are a recruiter analyst for GUTTS (Ground Up Trade & Talent Solutions), a workforce-development
+company in Fairfax, VA that places entry-level Plumbing, HVAC, and skilled-trades candidates with
+employers across Northern Virginia and the DC metro area.
+
+Score each job on a 1–10 scale for how well it fits a candidate GUTTS would place:
+  10 = Perfect: entry-level / apprentice Plumbing or HVAC in NoVA / DC metro
+   7 = Good: trades tech, helper, installer, or service tech in the region
+   5 = Marginal: trades-adjacent but senior, high-experience, or outside area
+   2 = Unlikely: non-trade, office, IT, or software role
+   1 = Irrelevant: clearly outside GUTTS scope
+
+Return ONLY a JSON array (no markdown fences, no extra text):
+[{"index": <0-based int>, "score": <int 1-10>, "reason": "<one short sentence>"},...]
+"""
+
+
+def score_jobs_with_llm(
+    curated_jobs: pd.DataFrame,
+    log: Callable[[str], None] | None = None,
+    *,
+    provider: str = "groq",
+    model: str | None = None,
+    batch_size: int = 10,
+    threshold: int = 0,
+) -> pd.DataFrame:
+    """Score jobs for GUTTS candidate fit via any OpenAI-compatible LLM provider.
+
+    Adds ``relevance_score`` (int 1–10) and ``relevance_reason`` (str) columns,
+    then sorts output by score descending.  If ``threshold`` > 0, rows below
+    that score are dropped.
+
+    Supported providers (set via ``ScrapeConfig.llm_provider``):
+      * ``"groq"``       — GROQ_API_KEY, default model llama-3.3-70b-versatile
+      * ``"gemini"``     — GEMINI_API_KEY, default model gemini-2.0-flash
+      * ``"openrouter"`` — OPENROUTER_API_KEY, default model llama-3.3-70b-instruct:free
+
+    Falls back gracefully when ``openai`` is not installed, the provider is
+    unknown, or the required API key env-var is not set.
+    """
+    try:
+        from openai import OpenAI  # optional dependency (pip install openai)
+    except ImportError:
+        if log:
+            log("LLM scoring skipped: 'openai' package not installed (pip install openai)")
+        out = curated_jobs.copy()
+        out["relevance_score"] = None
+        out["relevance_reason"] = ""
+        return out
+
+    provider = provider.lower().strip()
+    if provider not in _LLM_PROVIDERS:
+        if log:
+            log(
+                f"LLM scoring skipped: unknown provider '{provider}'. "
+                f"Choose from: {', '.join(_LLM_PROVIDERS)}"
+            )
+        out = curated_jobs.copy()
+        out["relevance_score"] = None
+        out["relevance_reason"] = ""
+        return out
+
+    base_url, env_key, default_model = _LLM_PROVIDERS[provider]
+    resolved_model = model or default_model
+    api_key = os.environ.get(env_key, "")
+    if not api_key.strip():
+        if log:
+            log(f"LLM scoring skipped: {env_key} environment variable not set")
+        out = curated_jobs.copy()
+        out["relevance_score"] = None
+        out["relevance_reason"] = ""
+        return out
+
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    result = curated_jobs.reset_index(drop=True).copy()
+    total = len(result)
+    scores: dict[int, tuple[int | None, str]] = {}
+
+    if log:
+        log(f"LLM scoring {total} jobs via {provider}/{resolved_model} in batches of {batch_size} …")
+
+    for batch_start in range(0, total, batch_size):
+        batch_end = min(batch_start + batch_size, total)
+        lines: list[str] = []
+        for i in range(batch_start, batch_end):
+            row = result.iloc[i]
+            lines.append(
+                f"[{i}] title={_as_text(row.get('job_title'))} | "
+                f"company={_as_text(row.get('company'))} | "
+                f"location={_as_text(row.get('location'))} | "
+                f"work_type={_as_text(row.get('work_type'))} | "
+                f"experience={_as_text(row.get('experience'))} | "
+                f"salary={_as_text(row.get('salary'))} | "
+                f"summary={_as_text(row.get('summary'))[:200]}"
+            )
+        batch_text = "\n".join(lines)
+
+        try:
+            response = client.chat.completions.create(
+                model=resolved_model,
+                messages=[
+                    {"role": "system", "content": _GUTTS_SCORE_SYSTEM},
+                    {"role": "user", "content": batch_text},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0,
+                max_tokens=1024,
+            )
+            raw = (response.choices[0].message.content or "").strip()
+            # The model may return {"results": [...]} or a bare array — handle both
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                # Unwrap common wrapper keys
+                entries: list[dict] = next(
+                    (parsed[k] for k in ("results", "jobs", "scores", "data") if k in parsed),
+                    [],
+                )
+            else:
+                entries = parsed
+            for entry in entries:
+                idx = int(entry["index"])
+                scores[idx] = (int(entry["score"]), str(entry.get("reason", "")))
+        except Exception as exc:
+            if log:
+                log(f"  LLM batch {batch_start}–{batch_end - 1}: error — {exc}")
+            # Leave those indices un-scored (they'll get None)
+
+    result["relevance_score"] = [scores.get(i, (None, ""))[0] for i in range(total)]
+    result["relevance_reason"] = [scores.get(i, (None, ""))[1] for i in range(total)]
+
+    scored_count = int(result["relevance_score"].notna().sum())
+    if log:
+        log(f"LLM scored {scored_count}/{total} jobs")
+
+    if threshold > 0:
+        # When a threshold is set, drop both un-scored rows (API error/batch failure)
+        # AND rows that scored below the threshold — only scored rows ≥ threshold pass.
+        before_threshold = len(result)
+        result = result[
+            result["relevance_score"].notna() & (result["relevance_score"] >= threshold)
+        ].reset_index(drop=True)
+        if log:
+            log(f"LLM threshold (≥{threshold}) kept {len(result)}/{before_threshold} rows")
+
+    # Sort by relevance score descending; un-scored rows go last
+    result = result.sort_values(
+        "relevance_score", ascending=False, na_position="last"
+    ).reset_index(drop=True)
+    return result
+
+
 def run_one_scrape(
     *,
     site_name: list[str],
@@ -401,6 +587,10 @@ def run_one_scrape(
     google_search_term: str | None,
     linkedin_fetch_description: bool,
     verbose: int,
+    job_type: str | None = None,
+    enforce_annual_salary: bool = False,
+    user_agent: str | None = None,
+    proxies: list[str] | None = None,
 ) -> pd.DataFrame:
     kwargs: dict = dict(
         site_name=site_name,
@@ -415,6 +605,14 @@ def run_one_scrape(
     )
     if google_search_term is not None and str(google_search_term).strip():
         kwargs["google_search_term"] = google_search_term.strip()
+    if job_type is not None:
+        kwargs["job_type"] = job_type
+    if enforce_annual_salary:
+        kwargs["enforce_annual_salary"] = True
+    if user_agent is not None:
+        kwargs["user_agent"] = user_agent
+    if proxies is not None:
+        kwargs["proxies"] = proxies
     return scrape_jobs(**kwargs)
 
 
@@ -441,6 +639,14 @@ def config_from_args(args: argparse.Namespace) -> ScrapeConfig:
         max_experience_years=getattr(args, "max_experience_years", None),
         work_modes=getattr(args, "work_modes", []) or [],
         include_unknown_links=getattr(args, "include_unknown_links", False),
+        job_type=getattr(args, "job_type", None),
+        enforce_annual_salary=getattr(args, "enforce_annual_salary", False),
+        user_agent=getattr(args, "user_agent", None),
+        proxies=getattr(args, "proxies", None),
+        score_with_llm=getattr(args, "score_with_llm", False),
+        llm_score_threshold=getattr(args, "llm_score_threshold", 0),
+        llm_provider=getattr(args, "llm_provider", "groq"),
+        llm_model=getattr(args, "llm_model", None),
     )
 
 
@@ -492,6 +698,10 @@ def run_gutts_scrape(
             google_search_term=google_term,
             linkedin_fetch_description=config.linkedin_fetch_description,
             verbose=config.verbose,
+            job_type=config.job_type,
+            enforce_annual_salary=config.enforce_annual_salary,
+            user_agent=config.user_agent,
+            proxies=config.proxies,
         )
         df["search_pass"] = term
         frames.append(df)
@@ -523,6 +733,15 @@ def run_gutts_scrape(
 
     curated_jobs = dedupe_jobs(curated_jobs, log=log)
 
+    if config.score_with_llm:
+        curated_jobs = score_jobs_with_llm(
+            curated_jobs,
+            log=log,
+            provider=config.llm_provider,
+            model=config.llm_model,
+            threshold=config.llm_score_threshold,
+        )
+
     curated_columns = [
         "job_title",
         "company",
@@ -539,6 +758,8 @@ def run_gutts_scrape(
         "search_query",
         "scraped_at",
     ]
+    if config.score_with_llm:
+        curated_columns += ["relevance_score", "relevance_reason"]
     for col in curated_columns:
         if col not in curated_jobs.columns:
             curated_jobs[col] = ""
@@ -693,6 +914,68 @@ def parse_args() -> argparse.Namespace:
         "--include-unknown-links",
         action="store_true",
         help="Include unknown (unverified) links in output in addition to live links.",
+    )
+    # ── jobspy pass-through extras ──
+    parser.add_argument(
+        "--job-type",
+        default=None,
+        help="Job type filter (e.g. fulltime, parttime, contract, internship).",
+    )
+    parser.add_argument(
+        "--enforce-annual-salary",
+        action="store_true",
+        help="Only return jobs that advertise an annual salary.",
+    )
+    parser.add_argument(
+        "--user-agent",
+        default=None,
+        help="Custom User-Agent string for HTTP requests.",
+    )
+    parser.add_argument(
+        "--proxies",
+        nargs="+",
+        default=None,
+        metavar="PROXY",
+        help="HTTP/HTTPS proxies to rotate (e.g. http://host:port).",
+    )
+    # ── LLM relevance scoring ──
+    parser.add_argument(
+        "--score-with-llm",
+        action="store_true",
+        help=(
+            "Score each job for GUTTS candidate fit via an LLM (1–10 scale). "
+            "Adds relevance_score / relevance_reason columns; sorts output by score desc. "
+            "Requires the appropriate API key env-var (see --llm-provider)."
+        ),
+    )
+    parser.add_argument(
+        "--llm-score-threshold",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Drop jobs scoring below N when --score-with-llm is set (0 = keep all). "
+            "Recommended: 7 to filter out clearly irrelevant postings."
+        ),
+    )
+    parser.add_argument(
+        "--llm-provider",
+        default="groq",
+        choices=["groq", "gemini", "openrouter"],
+        help=(
+            "LLM provider for relevance scoring. "
+            "groq → GROQ_API_KEY, gemini → GEMINI_API_KEY, openrouter → OPENROUTER_API_KEY "
+            "(default: groq)."
+        ),
+    )
+    parser.add_argument(
+        "--llm-model",
+        default=None,
+        help=(
+            "Model override for the LLM provider "
+            "(default: llama-3.3-70b-versatile for groq, gemini-2.0-flash for gemini, "
+            "meta-llama/llama-3.3-70b-instruct:free for openrouter)."
+        ),
     )
     return parser.parse_args()
 

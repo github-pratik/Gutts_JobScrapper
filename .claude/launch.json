@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "crm-app",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "7821", "--directory", "app/crm"],
+      "port": 7821
+    }
+  ]
+}
