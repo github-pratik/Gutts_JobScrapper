@@ -262,6 +262,7 @@ body {
 }
 .crmBtn.ghost:hover { background: var(--link-tint); }
 .crmBtn.lg { height: 44px; font-size: 15px; padding: 0 20px; }
+.crmBtn.sm { height: 28px; font-size: 12px; padding: 0 10px; }
 .crmBtn.full { width: 100%; }
 .crmBtn:disabled { opacity: .55; cursor: not-allowed; }
 
@@ -270,7 +271,12 @@ body {
   display: inline-flex; align-items: center; gap: 10px;
   cursor: pointer; user-select: none; font-size: 13.5px; color: var(--ink-soft);
 }
-.crmToggle input { display: none; }
+/* Visually hidden but kept in accessibility tree so keyboard/AT can still focus it */
+.crmToggle input {
+  position: absolute; opacity: 0; width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0,0,0,0);
+  white-space: nowrap;
+}
 .crmToggle .track {
   width: 32px; height: 18px; border-radius: 999px;
   background: #CBD6E2; position: relative; transition: background .15s;

@@ -8,8 +8,8 @@ function Field({ label, help, children }) {
       <label className="crmLabel">
         {label}
         {help && <span className="help" title={help}>?</span>}
+        {children}
       </label>
-      {children}
     </div>
   );
 }
@@ -70,6 +70,7 @@ function Textarea({ value, onChange, disabled, rows = 5, mono = true }) {
 function Btn({ kind = 'secondary', size, full, disabled, onClick, children, type }) {
   const cls = ['crmBtn', kind];
   if (size === 'lg') cls.push('lg');
+  if (size === 'sm') cls.push('sm');
   if (full) cls.push('full');
   return (
     <button type={type || 'button'} className={cls.join(' ')} disabled={disabled} onClick={onClick}>
@@ -87,7 +88,7 @@ function Multiselect({ value, onChange, options, labels }) {
       {value.map(v => (
         <span key={v} className="crmChip">
           {labels[v] || v}
-          <span className="x" onClick={() => remove(v)}>×</span>
+          <button type="button" className="x" onClick={() => remove(v)} aria-label={`Remove ${labels[v] || v}`}>×</button>
         </span>
       ))}
       {remaining.length > 0 && (

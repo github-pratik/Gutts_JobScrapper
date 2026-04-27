@@ -558,9 +558,11 @@ def score_jobs_with_llm(
         log(f"LLM scored {scored_count}/{total} jobs")
 
     if threshold > 0:
+        # When a threshold is set, drop both un-scored rows (API error/batch failure)
+        # AND rows that scored below the threshold — only scored rows ≥ threshold pass.
         before_threshold = len(result)
         result = result[
-            result["relevance_score"].isna() | (result["relevance_score"] >= threshold)
+            result["relevance_score"].notna() & (result["relevance_score"] >= threshold)
         ].reset_index(drop=True)
         if log:
             log(f"LLM threshold (≥{threshold}) kept {len(result)}/{before_threshold} rows")
@@ -636,6 +638,14 @@ def config_from_args(args: argparse.Namespace) -> ScrapeConfig:
         max_experience_years=getattr(args, "max_experience_years", None),
         work_modes=getattr(args, "work_modes", []) or [],
         include_unknown_links=getattr(args, "include_unknown_links", False),
+        job_type=getattr(args, "job_type", None),
+        enforce_annual_salary=getattr(args, "enforce_annual_salary", False),
+        user_agent=getattr(args, "user_agent", None),
+        proxies=getattr(args, "proxies", None),
+        score_with_llm=getattr(args, "score_with_llm", False),
+        llm_score_threshold=getattr(args, "llm_score_threshold", 0),
+        llm_provider=getattr(args, "llm_provider", "groq"),
+        llm_model=getattr(args, "llm_model", None),
     )
 
 
@@ -903,6 +913,68 @@ def parse_args() -> argparse.Namespace:
         "--include-unknown-links",
         action="store_true",
         help="Include unknown (unverified) links in output in addition to live links.",
+    )
+    # ── jobspy pass-through extras ──
+    parser.add_argument(
+        "--job-type",
+        default=None,
+        help="Job type filter (e.g. fulltime, parttime, contract, internship).",
+    )
+    parser.add_argument(
+        "--enforce-annual-salary",
+        action="store_true",
+        help="Only return jobs that advertise an annual salary.",
+    )
+    parser.add_argument(
+        "--user-agent",
+        default=None,
+        help="Custom User-Agent string for HTTP requests.",
+    )
+    parser.add_argument(
+        "--proxies",
+        nargs="+",
+        default=None,
+        metavar="PROXY",
+        help="HTTP/HTTPS proxies to rotate (e.g. http://host:port).",
+    )
+    # ── LLM relevance scoring ──
+    parser.add_argument(
+        "--score-with-llm",
+        action="store_true",
+        help=(
+            "Score each job for GUTTS candidate fit via an LLM (1–10 scale). "
+            "Adds relevance_score / relevance_reason columns; sorts output by score desc. "
+            "Requires the appropriate API key env-var (see --llm-provider)."
+        ),
+    )
+    parser.add_argument(
+        "--llm-score-threshold",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "Drop jobs scoring below N when --score-with-llm is set (0 = keep all). "
+            "Recommended: 7 to filter out clearly irrelevant postings."
+        ),
+    )
+    parser.add_argument(
+        "--llm-provider",
+        default="groq",
+        choices=["groq", "gemini", "openrouter"],
+        help=(
+            "LLM provider for relevance scoring. "
+            "groq → GROQ_API_KEY, gemini → GEMINI_API_KEY, openrouter → OPENROUTER_API_KEY "
+            "(default: groq)."
+        ),
+    )
+    parser.add_argument(
+        "--llm-model",
+        default=None,
+        help=(
+            "Model override for the LLM provider "
+            "(default: llama-3.3-70b-versatile for groq, gemini-2.0-flash for gemini, "
+            "meta-llama/llama-3.3-70b-instruct:free for openrouter)."
+        ),
     )
     return parser.parse_args()
 

@@ -113,14 +113,16 @@ function ResultsTable({ jobs }) {
 
   const liveCount    = jobs.filter(j => j.link_status === 'live').length;
   const unknownCount = jobs.filter(j => j.link_status === 'unknown').length;
+  const deadCount    = jobs.filter(j => j.link_status === 'dead').length;
 
   return (
     <div className="resultsTable">
       {/* Table toolbar */}
       <div className="rtToolbar">
         <div className="rtStats">
-          <span className="rtStatChip live">✓ {liveCount} live</span>
-          {unknownCount > 0 && <span className="rtStatChip unknown">? {unknownCount} unverified</span>}
+          <span className="rtStatChip live"><span className="dot" aria-hidden="true"></span>{liveCount} live</span>
+          {unknownCount > 0 && <span className="rtStatChip unk"><span className="dot" aria-hidden="true"></span>{unknownCount} unverified</span>}
+          {deadCount > 0 && <span className="rtStatChip dead"><span className="dot" aria-hidden="true"></span>{deadCount} dead</span>}
           <span className="rtStatChip total">{filtered.length} shown</span>
         </div>
         <div className="rtControls">
@@ -172,6 +174,8 @@ function ResultsTable({ jobs }) {
                   <td className="rtTd">
                     {job.link_status === 'live'
                       ? <span className="crmBadge ok">✓ live</span>
+                      : job.link_status === 'dead'
+                      ? <span className="crmBadge err">✕ dead</span>
                       : <span className="crmBadge warn">? unverified</span>}
                   </td>
                   <td className="rtTd rtLink">
@@ -195,6 +199,28 @@ function ResultsTable({ jobs }) {
       )}
     </div>
   );
+}
+
+/* ── Simple CSV parser (handles quoted fields, no external deps) ── */
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return [];
+  const parseRow = (line) => {
+    const cells = []; let inQ = false, cell = '';
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { if (inQ && line[i+1] === '"') { cell += '"'; i++; } else inQ = !inQ; }
+      else if (ch === ',' && !inQ) { cells.push(cell); cell = ''; }
+      else cell += ch;
+    }
+    cells.push(cell);
+    return cells;
+  };
+  const headers = parseRow(lines[0]);
+  return lines.slice(1).map(line => {
+    const vals = parseRow(line);
+    return Object.fromEntries(headers.map((h, i) => [h.trim(), (vals[i] || '').trim()]));
+  });
 }
 
 /* ── Main App ── */
@@ -232,6 +258,23 @@ function App() {
   const [lastResult, setLastResult] = useState(null);
   const [jobRows,    setJobRows]    = useState(null);
   const [rightTab,   setRightTab]   = useState('console'); // 'console' | 'results'
+  const csvInputRef = useRef(null);
+
+  const loadCsvFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const rows = parseCSV(ev.target.result);
+      if (rows.length > 0) {
+        setJobRows(rows);
+        setLastResult({ rows: rows.length, path: file.name });
+        setRightTab('results');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // allow re-selecting the same file
+  };
 
   useEffect(() => { setDistance(tweaks.defaultDistance); }, [tweaks.defaultDistance]);
 
@@ -479,6 +522,8 @@ function App() {
                   {lastResult && !running && (
                     <Btn kind="primary" size="sm">⤓ Download CSV</Btn>
                   )}
+                  <Btn kind="secondary" size="sm" onClick={() => csvInputRef.current?.click()}>📂 Load CSV</Btn>
+                  <input ref={csvInputRef} type="file" accept=".csv" style={{ display:'none' }} onChange={loadCsvFile} />
                 </div>
               </div>
             </div>
@@ -507,13 +552,13 @@ function App() {
                     <span>Run console</span>
                     {logs.length > 0 && <button className="consoleClear" onClick={() => setLogs([])}>Clear</button>}
                   </div>
-                  <pre className="crmCode" style={{ margin:0, borderRadius:'0 0 8px 8px', maxHeight:'none', minHeight:200 }}>
+                  <div className="crmCode" style={{ margin:0, borderRadius:'0 0 8px 8px', maxHeight:'none', minHeight:200, whiteSpace:'pre-wrap' }}>
                     {logs.length === 0 && !running && <span className="ts">Waiting for next run…</span>}
                     {logs.map((l, i) => (
                       <div key={i}><span className="ts">[{l.ts}]</span> <span className={l.cls||''}>{l.msg}</span></div>
                     ))}
                     {running && <div><span className="ts">…</span></div>}
-                  </pre>
+                  </div>
                 </div>
                 <div className="runMeta" style={{ marginTop: 10 }}>
                   <span className="metaChip">📍 {location} · {distance}mi</span>
