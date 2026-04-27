@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,6 +79,14 @@ class ScrapeConfig:
     max_experience_years: int | None = None
     work_modes: list[str] = field(default_factory=list)
     include_unknown_links: bool = False
+    # Extra jobspy params (passed through to scrape_jobs when set)
+    job_type: str | None = None
+    enforce_annual_salary: bool = False
+    user_agent: str | None = None
+    proxies: list[str] | None = None
+    # LLM relevance scoring via Claude API
+    score_with_llm: bool = False
+    llm_score_threshold: int = 0
 
 
 def resolve_output_path(output: str | None, output_dir: str) -> Path:
@@ -388,6 +398,135 @@ def apply_link_status_filter(
     return curated_jobs[curated_jobs["link_status"].isin(allowed)].reset_index(drop=True)
 
 
+# ── LLM relevance scoring ─────────────────────────────────────────────────────
+
+_GUTTS_SCORE_SYSTEM = """\
+You are a recruiter analyst for GUTTS (Ground Up Trade & Talent Solutions), a workforce-development
+company in Fairfax, VA that places entry-level Plumbing, HVAC, and skilled-trades candidates with
+employers across Northern Virginia and the DC metro area.
+
+Score each job on a 1–10 scale for how well it fits a candidate GUTTS would place:
+  10 = Perfect: entry-level / apprentice Plumbing or HVAC in NoVA / DC metro
+   7 = Good: trades tech, helper, installer, or service tech in the region
+   5 = Marginal: trades-adjacent but senior, high-experience, or outside area
+   2 = Unlikely: non-trade, office, IT, or software role
+   1 = Irrelevant: clearly outside GUTTS scope
+
+Return ONLY a JSON array (no markdown fences, no extra text):
+[{"index": <0-based int>, "score": <int 1-10>, "reason": "<one short sentence>"},...]
+"""
+
+
+def score_jobs_with_llm(
+    curated_jobs: pd.DataFrame,
+    log: Callable[[str], None] | None = None,
+    *,
+    batch_size: int = 10,
+    threshold: int = 0,
+) -> pd.DataFrame:
+    """Score jobs for GUTTS candidate fit using the Claude API (claude-haiku-4-5).
+
+    Adds ``relevance_score`` (int 1–10) and ``relevance_reason`` (str) columns,
+    then sorts output by score descending.  If ``threshold`` > 0, rows below
+    that score are dropped.  Falls back gracefully when ``anthropic`` is not
+    installed or ``ANTHROPIC_API_KEY`` is not set.
+    """
+    try:
+        import anthropic  # optional dependency
+    except ImportError:
+        if log:
+            log("LLM scoring skipped: 'anthropic' package not installed (pip install anthropic)")
+        out = curated_jobs.copy()
+        out["relevance_score"] = None
+        out["relevance_reason"] = ""
+        return out
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key.strip():
+        if log:
+            log("LLM scoring skipped: ANTHROPIC_API_KEY environment variable not set")
+        out = curated_jobs.copy()
+        out["relevance_score"] = None
+        out["relevance_reason"] = ""
+        return out
+
+    client = anthropic.Anthropic(api_key=api_key)
+    result = curated_jobs.reset_index(drop=True).copy()
+    total = len(result)
+    scores: dict[int, tuple[int | None, str]] = {}
+
+    if log:
+        log(f"LLM scoring {total} jobs in batches of {batch_size} (claude-haiku-4-5) …")
+
+    for batch_start in range(0, total, batch_size):
+        batch_end = min(batch_start + batch_size, total)
+        lines: list[str] = []
+        for i in range(batch_start, batch_end):
+            row = result.iloc[i]
+            lines.append(
+                f"[{i}] title={_as_text(row.get('job_title'))} | "
+                f"company={_as_text(row.get('company'))} | "
+                f"location={_as_text(row.get('location'))} | "
+                f"work_type={_as_text(row.get('work_type'))} | "
+                f"experience={_as_text(row.get('experience'))} | "
+                f"salary={_as_text(row.get('salary'))} | "
+                f"summary={_as_text(row.get('summary'))[:200]}"
+            )
+        batch_text = "\n".join(lines)
+
+        try:
+            response = client.messages.create(
+                model="claude-haiku-4-5",
+                max_tokens=1024,
+                system=[
+                    {
+                        "type": "text",
+                        "text": _GUTTS_SCORE_SYSTEM,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                messages=[{"role": "user", "content": batch_text}],
+                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+            )
+            raw = response.content[0].text.strip()
+            # Strip accidental markdown fences the model might add
+            if raw.startswith("```"):
+                lines_raw = raw.split("\n")
+                raw = "\n".join(lines_raw[1:])  # drop opening ```json line
+                if "```" in raw:
+                    raw = raw[: raw.rfind("```")]
+                raw = raw.strip()
+            entries: list[dict] = json.loads(raw)
+            for entry in entries:
+                idx = int(entry["index"])
+                scores[idx] = (int(entry["score"]), str(entry.get("reason", "")))
+        except Exception as exc:
+            if log:
+                log(f"  LLM batch {batch_start}–{batch_end - 1}: error — {exc}")
+            # Leave those indices un-scored (they'll get None)
+
+    result["relevance_score"] = [scores.get(i, (None, ""))[0] for i in range(total)]
+    result["relevance_reason"] = [scores.get(i, (None, ""))[1] for i in range(total)]
+
+    scored_count = int(result["relevance_score"].notna().sum())
+    if log:
+        log(f"LLM scored {scored_count}/{total} jobs")
+
+    if threshold > 0:
+        before_threshold = len(result)
+        result = result[
+            result["relevance_score"].isna() | (result["relevance_score"] >= threshold)
+        ].reset_index(drop=True)
+        if log:
+            log(f"LLM threshold (≥{threshold}) kept {len(result)}/{before_threshold} rows")
+
+    # Sort by relevance score descending; un-scored rows go last
+    result = result.sort_values(
+        "relevance_score", ascending=False, na_position="last"
+    ).reset_index(drop=True)
+    return result
+
+
 def run_one_scrape(
     *,
     site_name: list[str],
@@ -400,6 +539,10 @@ def run_one_scrape(
     google_search_term: str | None,
     linkedin_fetch_description: bool,
     verbose: int,
+    job_type: str | None = None,
+    enforce_annual_salary: bool = False,
+    user_agent: str | None = None,
+    proxies: list[str] | None = None,
 ) -> pd.DataFrame:
     kwargs: dict = dict(
         site_name=site_name,
@@ -414,6 +557,14 @@ def run_one_scrape(
     )
     if google_search_term is not None and str(google_search_term).strip():
         kwargs["google_search_term"] = google_search_term.strip()
+    if job_type is not None:
+        kwargs["job_type"] = job_type
+    if enforce_annual_salary:
+        kwargs["enforce_annual_salary"] = True
+    if user_agent is not None:
+        kwargs["user_agent"] = user_agent
+    if proxies is not None:
+        kwargs["proxies"] = proxies
     return scrape_jobs(**kwargs)
 
 
@@ -491,6 +642,10 @@ def run_gutts_scrape(
             google_search_term=google_term,
             linkedin_fetch_description=config.linkedin_fetch_description,
             verbose=config.verbose,
+            job_type=config.job_type,
+            enforce_annual_salary=config.enforce_annual_salary,
+            user_agent=config.user_agent,
+            proxies=config.proxies,
         )
         df["search_pass"] = term
         frames.append(df)
@@ -522,6 +677,13 @@ def run_gutts_scrape(
 
     curated_jobs = dedupe_jobs(curated_jobs, log=log)
 
+    if config.score_with_llm:
+        curated_jobs = score_jobs_with_llm(
+            curated_jobs,
+            log=log,
+            threshold=config.llm_score_threshold,
+        )
+
     curated_columns = [
         "job_title",
         "company",
@@ -538,6 +700,8 @@ def run_gutts_scrape(
         "search_query",
         "scraped_at",
     ]
+    if config.score_with_llm:
+        curated_columns += ["relevance_score", "relevance_reason"]
     for col in curated_columns:
         if col not in curated_jobs.columns:
             curated_jobs[col] = ""
