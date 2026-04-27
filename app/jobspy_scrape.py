@@ -84,9 +84,11 @@ class ScrapeConfig:
     enforce_annual_salary: bool = False
     user_agent: str | None = None
     proxies: list[str] | None = None
-    # LLM relevance scoring via Claude API
+    # LLM relevance scoring (provider-agnostic via OpenAI-compatible API)
     score_with_llm: bool = False
     llm_score_threshold: int = 0
+    llm_provider: str = "groq"          # "groq" | "gemini" | "openrouter"
+    llm_model: str | None = None        # None = sensible default per provider
 
 
 def resolve_output_path(output: str | None, output_dir: str) -> Path:
@@ -398,7 +400,28 @@ def apply_link_status_filter(
     return curated_jobs[curated_jobs["link_status"].isin(allowed)].reset_index(drop=True)
 
 
-# ── LLM relevance scoring ─────────────────────────────────────────────────────
+# ── LLM relevance scoring (provider-agnostic) ────────────────────────────────
+
+# Supported providers → (base_url, env_key, default_model)
+# All use the OpenAI Chat Completions format so a single `openai` SDK handles
+# every provider — just swap base_url + api_key.
+_LLM_PROVIDERS: dict[str, tuple[str, str, str]] = {
+    "groq": (
+        "https://api.groq.com/openai/v1",
+        "GROQ_API_KEY",
+        "llama-3.3-70b-versatile",
+    ),
+    "gemini": (
+        "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "GEMINI_API_KEY",
+        "gemini-2.0-flash",
+    ),
+    "openrouter": (
+        "https://openrouter.ai/api/v1",
+        "OPENROUTER_API_KEY",
+        "meta-llama/llama-3.3-70b-instruct:free",
+    ),
+}
 
 _GUTTS_SCORE_SYSTEM = """\
 You are a recruiter analyst for GUTTS (Ground Up Trade & Talent Solutions), a workforce-development
@@ -421,42 +444,65 @@ def score_jobs_with_llm(
     curated_jobs: pd.DataFrame,
     log: Callable[[str], None] | None = None,
     *,
+    provider: str = "groq",
+    model: str | None = None,
     batch_size: int = 10,
     threshold: int = 0,
 ) -> pd.DataFrame:
-    """Score jobs for GUTTS candidate fit using the Claude API (claude-haiku-4-5).
+    """Score jobs for GUTTS candidate fit via any OpenAI-compatible LLM provider.
 
     Adds ``relevance_score`` (int 1–10) and ``relevance_reason`` (str) columns,
     then sorts output by score descending.  If ``threshold`` > 0, rows below
-    that score are dropped.  Falls back gracefully when ``anthropic`` is not
-    installed or ``ANTHROPIC_API_KEY`` is not set.
+    that score are dropped.
+
+    Supported providers (set via ``ScrapeConfig.llm_provider``):
+      * ``"groq"``       — GROQ_API_KEY, default model llama-3.3-70b-versatile
+      * ``"gemini"``     — GEMINI_API_KEY, default model gemini-2.0-flash
+      * ``"openrouter"`` — OPENROUTER_API_KEY, default model llama-3.3-70b-instruct:free
+
+    Falls back gracefully when ``openai`` is not installed, the provider is
+    unknown, or the required API key env-var is not set.
     """
     try:
-        import anthropic  # optional dependency
+        from openai import OpenAI  # optional dependency (pip install openai)
     except ImportError:
         if log:
-            log("LLM scoring skipped: 'anthropic' package not installed (pip install anthropic)")
+            log("LLM scoring skipped: 'openai' package not installed (pip install openai)")
         out = curated_jobs.copy()
         out["relevance_score"] = None
         out["relevance_reason"] = ""
         return out
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    provider = provider.lower().strip()
+    if provider not in _LLM_PROVIDERS:
+        if log:
+            log(
+                f"LLM scoring skipped: unknown provider '{provider}'. "
+                f"Choose from: {', '.join(_LLM_PROVIDERS)}"
+            )
+        out = curated_jobs.copy()
+        out["relevance_score"] = None
+        out["relevance_reason"] = ""
+        return out
+
+    base_url, env_key, default_model = _LLM_PROVIDERS[provider]
+    resolved_model = model or default_model
+    api_key = os.environ.get(env_key, "")
     if not api_key.strip():
         if log:
-            log("LLM scoring skipped: ANTHROPIC_API_KEY environment variable not set")
+            log(f"LLM scoring skipped: {env_key} environment variable not set")
         out = curated_jobs.copy()
         out["relevance_score"] = None
         out["relevance_reason"] = ""
         return out
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = OpenAI(api_key=api_key, base_url=base_url)
     result = curated_jobs.reset_index(drop=True).copy()
     total = len(result)
     scores: dict[int, tuple[int | None, str]] = {}
 
     if log:
-        log(f"LLM scoring {total} jobs in batches of {batch_size} (claude-haiku-4-5) …")
+        log(f"LLM scoring {total} jobs via {provider}/{resolved_model} in batches of {batch_size} …")
 
     for batch_start in range(0, total, batch_size):
         batch_end = min(batch_start + batch_size, total)
@@ -475,28 +521,27 @@ def score_jobs_with_llm(
         batch_text = "\n".join(lines)
 
         try:
-            response = client.messages.create(
-                model="claude-haiku-4-5",
-                max_tokens=1024,
-                system=[
-                    {
-                        "type": "text",
-                        "text": _GUTTS_SCORE_SYSTEM,
-                        "cache_control": {"type": "ephemeral"},
-                    }
+            response = client.chat.completions.create(
+                model=resolved_model,
+                messages=[
+                    {"role": "system", "content": _GUTTS_SCORE_SYSTEM},
+                    {"role": "user", "content": batch_text},
                 ],
-                messages=[{"role": "user", "content": batch_text}],
-                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
+                response_format={"type": "json_object"},
+                temperature=0,
+                max_tokens=1024,
             )
-            raw = response.content[0].text.strip()
-            # Strip accidental markdown fences the model might add
-            if raw.startswith("```"):
-                lines_raw = raw.split("\n")
-                raw = "\n".join(lines_raw[1:])  # drop opening ```json line
-                if "```" in raw:
-                    raw = raw[: raw.rfind("```")]
-                raw = raw.strip()
-            entries: list[dict] = json.loads(raw)
+            raw = (response.choices[0].message.content or "").strip()
+            # The model may return {"results": [...]} or a bare array — handle both
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                # Unwrap common wrapper keys
+                entries: list[dict] = next(
+                    (parsed[k] for k in ("results", "jobs", "scores", "data") if k in parsed),
+                    [],
+                )
+            else:
+                entries = parsed
             for entry in entries:
                 idx = int(entry["index"])
                 scores[idx] = (int(entry["score"]), str(entry.get("reason", "")))
@@ -681,6 +726,8 @@ def run_gutts_scrape(
         curated_jobs = score_jobs_with_llm(
             curated_jobs,
             log=log,
+            provider=config.llm_provider,
+            model=config.llm_model,
             threshold=config.llm_score_threshold,
         )
 

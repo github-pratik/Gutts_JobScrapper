@@ -1,4 +1,4 @@
 python-jobspy
 pyinstaller
 streamlit
-anthropic
+openai
