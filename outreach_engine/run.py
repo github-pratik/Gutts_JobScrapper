@@ -25,13 +25,32 @@ def norm(c):
 def group(jobs, cfg, today):
     cos = collections.OrderedDict()
     for j in jobs:
-        j["level"] = quality.level(j["title"])
+        j["level"] = quality.level(j["title"], j.get("description", ""))
         if j["level"] not in cfg["levels"] or not quality.is_fresh(j.get("posted", ""), today, cfg["max_days_old"]):
             continue
         cos.setdefault(norm(j["company"]), {"company": j["company"], "jobs": [], "website": ""})["jobs"].append(j)
         if j.get("website"):
             cos[norm(j["company"])]["website"] = j["website"]
     return cos
+
+
+def collapse(jobs):
+    """One row per job title per company: the same opening posted in 14 towns becomes one line."""
+    by = collections.OrderedDict()
+    for j in jobs:
+        by.setdefault(j["title"].lower(), []).append(j)
+    out = []
+    for group_ in by.values():
+        first = max(group_, key=lambda j: j.get("posted", ""))
+        towns = list(dict.fromkeys(j["location"].split(",")[0].strip() for j in group_ if j["location"]))
+        state = first["location"].split(",")[1].strip() if "," in first["location"] else ""
+        loc = first["location"] if len(towns) <= 1 else ", ".join(towns[:3]) + (f" +{len(towns) - 3} more" if len(towns) > 3 else "") + (f" ({state} area)" if state else "")
+        live = "Live" if any(j["live"] == "Live" for j in group_) else first["live"]
+        out.append({**first, "location": loc, "live": live, "openings": len(group_)})
+    return out
+
+
+BOARD_MAIL = ("monster.", "indeed.", "ziprecruiter.", "glassdoor.", "linkedin.", "icims.", "greenhouse.", "lever.co", "workday", "usajobs.")
 
 
 def main():
@@ -76,18 +95,27 @@ def main():
     def work(co):
         for j in co["jobs"]:
             j["live"] = quality.check_live(j, status)
-        co["jobs"] = [j for j in co["jobs"] if j["live"] != "Expired"]
+        co["jobs"] = collapse([j for j in co["jobs"] if j["live"] != "Expired"])
         if not co["jobs"]:
             return None
+        for j in co["jobs"]:
+            j["requirements"] = quality.requirements(j.get("description", ""))
         city = co["jobs"][0]["location"].split(",")[0]
-        e = contacts.enrich(co["company"], city, known.get(norm(co["company"])) or co["website"], f)
+        kw = known.get(norm(co["company"]))
+        e = contacts.enrich(co["company"], city, kw or co["website"], f, trusted=bool(kw))
         titles = " ".join(j["title"] for j in co["jobs"])
-        ppl = "; ".join(f"{n} ({t})" for n, t in list(e["people"].items())[:5])
-        posted = [x for x in {j.get("emails", "") for j in co["jobs"]} if x]
+        people = list(e["people"].items())
+        posted = [m.strip() for j in co["jobs"] for m in (j.get("emails") or "").split(",")
+                  if "@" in m and not any(b in m.lower() for b in BOARD_MAIL)]
+        notes = [e.get("note", "")]
+        if e["phone"] and not e.get("local"):
+            notes.append("Phone is a head-office line, not local - ask for the DC-area service/maintenance manager")
+        if len(people) > 1:
+            notes.append("Also: " + "; ".join(f"{n} ({t})" for n, t in people[1:4]))
         co.update(industry=quality.sector(co["company"], titles), trade=quality.trade(titles, co["company"]),
-                  phone=e["phone"], email=e["email"] or (posted[0].split(",")[0] if posted else ""), website=e["website"],
-                  all_phones=e["all_phones"], all_emails=e["all_emails"],
-                  notes="; ".join(x for x in [ppl, e.get("note", "")] if x))
+                  phone=e["phone"], email=e["email"] or (posted[0] if posted else ""), website=e["website"],
+                  contact_name=people[0][0] if people else "", contact_title=people[0][1] if people else "",
+                  all_phones=e["all_phones"], all_emails=e["all_emails"], notes="; ".join(x for x in notes if x))
         print(f"    {co['company'][:40]:40} phone={'Y' if co['phone'] else '-'} email={'Y' if co['email'] else '-'} jobs={len(co['jobs'])}")
         return co
 
@@ -98,10 +126,10 @@ def main():
     path = out / f"GUTTS_Call_Sheet_{today}.xlsx"
     sheet.build(done, str(path), today)
     with open(out / f"postings_{today}.csv", "w", newline="") as fh:
-        w = csv.writer(fh); w.writerow(["company", "industry", "trade", "phone", "email", "website", "title", "level", "location", "url", "source", "posting"])
+        w = csv.writer(fh); w.writerow(["company", "industry", "trade", "phone", "email", "website", "contact", "notes", "title", "level", "location", "pay", "requirements", "posted", "url", "source", "posting"])
         for c in done:
             for j in c["jobs"]:
-                w.writerow([c["company"], c["industry"], c["trade"], c["phone"], c["email"], c["website"], j["title"], j["level"], j["location"], j["url"], j["source"], j["live"]])
+                w.writerow([c["company"], c["industry"], c["trade"], c["phone"], c["email"], c["website"], f"{c['contact_name']} {c['contact_title']}".strip(), c["notes"], j["title"], j["level"], j["location"], j.get("pay", ""), j["requirements"], j.get("posted", ""), j["url"], j["source"], j["live"]])
 
     print("4/4 Updating master list")
     for c in done:

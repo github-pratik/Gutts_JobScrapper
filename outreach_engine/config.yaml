@@ -19,6 +19,7 @@ usajobs_terms: ["HVAC", "plumber", "maintenance mechanic"]
 jobspy_sites: [indeed, zip_recruiter]   # open-source JobSpy. Google Jobs is unavailable in JobSpy right now.
 results_per_search: 60
 max_days_old: 14
+distance_miles: 25              # search radius around each location
 levels: [Entry, Mid]            # Senior roles are dropped
 only_new_companies: true        # skip companies already on a past sheet (master.csv)
 max_companies: 150
@@ -26,7 +27,7 @@ workers: 8                      # companies crawled at the same time
 delay_seconds: 1.0              # pause between pages on the same website
 
 title_include: "hvac|plumb|pipe ?fitt|refriger|chiller|boiler|maintenance (tech|mech|engineer)|building (engineer|maintenance)|facilit(y|ies) (tech|engineer|maintenance)|critical (facilit|environment)|data cent(er|re) (tech|facilit|oper|engineer)|apprentice|mechanic(al)? (helper|tech)|service tech|installer|stationary engineer"
-title_exclude: "software|sales|account|market|nurse|driver|cdl|electric(al|ian) (only|engineer)|design engineer|estimator|project manager|director|vp|vice president|recruit|intern\\b|customer service|dispatcher|warehouse|aircraft|aviation|automotive|auto tech|network|security officer|janitor|housekeep|cook|IT support"
+title_exclude: "software|sales|account|market|nurse|driver|cdl|electric(al|ian) (only|engineer)|design engineer|estimator|project manager|director|vp|vice president|recruit|intern\\b|customer service|dispatcher|warehouse|aircraft|aviation|automotive|auto tech|network|security officer|trash|compactor|janitor|housekeep|cook|IT support"
 area_regex: "\\b(VA|MD|DC|Virginia|Maryland|District of Columbia|Washington)\\b"
 
 skip_companies: ["Confidential", "Indeed", "CyberCoders", "Aerotek", "Insight Global", "Robert Half", "TEKsystems", "Randstad", "Adecco", "Kelly Services", "Jobot", "Actalent", "Tradesmen International"]
@@ -43,3 +44,34 @@ known_websites:
   John Akridge Co: https://akridge.com
   Planned Companies: https://www.plannedcompanies.com
   William C. Smith & Co: https://www.wcsmith.com
+  US Architect of the Capitol: https://www.aoc.gov
+  911Air-Care LLC: https://911air-care.com/
+  Fairland Plumbing and Heating: http://fairlandplumbing.net/
+  Service First Heating & Air Conditioning: https://www.servicefirstva.com/
+  Michael Bonsby Heating & Air Conditioning: https://michaelbonsbyhvac.com/
+  Len The Plumber: https://lentheplumber.com/
+  Cardinal Plumbing Heating & Air Inc.: https://www.cardinalplumbingva.com/
+  JOHN C FLOOD: https://www.johncflood.com/
+  Bay Breeze Heating & Cooling, Inc.: http://www.baybreezehvac.com/
+  Capital Mechanical: http://www.capmec.com/
+  Advantage Service Group: https://myasginc.com
+  All Clear Plumbing and Drain Services, LLC: https://allclearplumbinganddrain.com
+  AVS Heating & Air Conditioning: https://avsheatingandair.com
+  Buric Heating and Air Conditioning: https://burichvac.com
+  Clarksville Heating & Air: https://clarksvillecomfort.com
+  Cliff's Heating & Air: https://cliffshvac.com
+  ClimateCare HVAC Services, LLC.: https://climatecareservices.com
+  E.M. Logan Inc: https://emloganinc.com
+  A&G Management Company, Inc.: https://aandgmanagement.com
+  ARS/Rescue Rooter: https://ars.com/laurel
+  ColonialWebb: https://colonialwebb.com
+  F.H. Furr Plumbing, Heating, Air Conditioning, and Electrical Inc.: https://fhfurr.com
+  HDZ Mechanical, LLC: https://hdzmech.com
+  Patterson Plumbing Services: https://pattersonplumbingservices.com
+  RJH Air Conditioning and Refrigeration Service: https://rjhservice.com
+  Service Experts: https://serviceexperts.com
+  Shapiro & Duncan Inc: https://shapiroandduncan.com
+  Smooth Plumbing: https://smoothplumbing.com
+  Southland Industries: https://southlandind.com
+  Vertical Mechanical Group: https://vmgmech.com
+  CT/HX: https://cthx.com

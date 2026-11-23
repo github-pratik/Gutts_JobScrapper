@@ -31,6 +31,7 @@ BAD_NAMES = {"Contact Us", "About Us", "Our Team", "Read More", "Learn More", "C
              "Air Conditioning", "Heating Cooling", "Privacy Policy", "Human Resources"}
 EMAIL_RANK = ["hr", "humanresources", "careers", "career", "jobs", "recruit", "talent", "hiring", "employment",
               "info", "contact", "office", "hello", "admin", "service", "sales"]
+LOW_VALUE = ("press", "media", "communications", "stratcom", "marketing", "investor", "legal", "webmaster", "sales", "news")
 LOCAL_AREA = {"703", "571", "202", "301", "240", "410", "443", "540", "804"}
 NOT_A_SITE = ("indeed.", "linkedin.", "facebook.", "yelp.", "glassdoor.", "ziprecruiter.", "bbb.org", "mapquest.",
               "zoominfo.", "yellowpages.", "angi.", "homeadvisor.", "thumbtack.", "instagram.", "twitter.", "x.com",
@@ -124,6 +125,8 @@ def best_email(emails, host):
 
     def rank(e):
         p = re.sub(r"[^a-z]", "", e.split("@")[0])
+        if p.startswith(LOW_VALUE):
+            return len(EMAIL_RANK) + 1
         for i, w in enumerate(EMAIL_RANK):
             if p.startswith(w):
                 return i
@@ -149,6 +152,7 @@ class Fetcher:
         self.delay, self.timeout = delay, timeout
         self.locks, self.robots, self.g = {}, {}, threading.Lock()
         self.errors = []  # fetch failures, reported at the end of the run
+        self.no_browser, self.browser_lock = False, threading.Lock()
 
     def _raw(self, url):
         try:
@@ -166,6 +170,22 @@ class Fetcher:
         except requests.RequestException as e:
             self.errors.append(f"{url}: {str(e)[:80]}")
         return None
+
+    def render(self, url):
+        """Load a page in a real headless browser (Scrapling DynamicFetcher) for sites that build their
+        content with JavaScript. Returns None when the browser is not installed or the page fails."""
+        if self.no_browser or not self.allowed(url):
+            return None
+        try:
+            from scrapling.fetchers import DynamicFetcher
+            with self.browser_lock:
+                r = DynamicFetcher.fetch(url, headless=True, network_idle=True, timeout=30000)
+            return str(r.html_content) if r.status == 200 else None
+        except Exception as e:
+            self.errors.append(f"browser {url}: {str(e)[:120]}")
+            if "install" in str(e).lower() or "executable" in str(e).lower():
+                self.no_browser = True  # browser missing: stop trying for the rest of the run
+            return None
 
     def allowed(self, url):
         host = urlparse(url).netloc
@@ -192,27 +212,45 @@ class Fetcher:
         return html
 
 
+STOP = {"inc", "llc", "co", "corp", "the", "and", "company", "services", "service", "group", "incorporated", "of", "us", "ltd"}
+SEARCH_BACKENDS = ("brave", "bing", "yahoo", "mojeek", "duckduckgo")
+
+
+def name_matches(company, host, title=""):
+    """True when a website plausibly belongs to the company: a distinctive word of the name, or its
+    initials (GMU, MWAA, HCPSS), appears in the host name or page title."""
+    words = [w for w in re.sub(r"[^a-z0-9 ]", " ", company.lower()).split() if w not in STOP]
+    if not words:
+        return False
+    flat = re.sub(r"[^a-z0-9]", "", host.lower().replace("www.", "").rsplit(".", 1)[0])
+    initials = "".join(w[0] for w in re.sub(r"[^a-z ]", " ", company.lower()).split() if w not in ("of", "the", "and", "us"))
+    if any(len(w) >= 3 and w in flat for w in words[:2]):
+        return True
+    if len(initials) >= 3 and initials in flat:
+        return True
+    t = title.lower()
+    return len(words) >= 2 and all(w in t for w in words[:2])
+
+
 def find_website(company, city=""):
-    """Open-source DuckDuckGo search (ddgs). Returns the first result that is not a directory/job board."""
+    """Open-source web search (ddgs) across several engines. Returns the first result that belongs to
+    the company and is not a directory or job board; '' when nothing trustworthy is found."""
     try:
         from ddgs import DDGS
     except ImportError:
+        return ""
+    query = f"{company} {city} official website"
+    for backend in SEARCH_BACKENDS:
         try:
-            from duckduckgo_search import DDGS
-        except ImportError:
-            return ""
-    words = [w for w in re.sub(r"[^a-z0-9 ]", " ", company.lower()).split() if w not in ("inc", "llc", "co", "corp", "the", "and", "company", "services", "group")]
-    try:
-        for r in DDGS().text(f"{company} {city} official website contact", max_results=8):
+            results = DDGS(timeout=15).text(query, max_results=8, backend=backend)
+        except Exception as e:  # engine blocked, timed out or unsupported: try the next one
+            print(f"  search [{backend}] failed for {company}: {str(e)[:70]}")
+            continue
+        for r in results or []:
             u = r.get("href") or r.get("url") or ""
             host = urlparse(u).netloc.lower()
-            if not host or any(b in host for b in NOT_A_SITE):
-                continue
-            blob = (host + " " + r.get("title", "")).lower().replace("-", "")
-            if any(w in blob for w in words[:2]):  # result must mention the company
+            if host and not any(b in host for b in NOT_A_SITE) and name_matches(company, host, r.get("title", "")):
                 return f"{urlparse(u).scheme}://{host}"
-    except Exception as e:
-        print(f"  search failed for {company}: {str(e)[:80]}")
     return ""
 
 
@@ -250,16 +288,37 @@ def crawl_site(base, fetcher, max_pages=8):
             guessed = True
             queue = [base + p for p in GUESS]
     ph, em = best_phone(counts, strong), best_email(emails, host)
+    if not ph and not em and hasattr(fetcher, "render"):  # nothing in the plain HTML: try a real browser once
+        for url in [base] + [u for u in done if re.search(r"contact", u, re.I)][:1] or [base]:
+            html = fetcher.render(url)
+            if not html:
+                continue
+            r = parse_page(html)
+            for e in r["emails"]:
+                if e not in emails:
+                    emails.append(e); src[e] = url
+            for p in r["phones"]:
+                counts[p] += 1; src.setdefault(p, url)
+            strong |= set(r["strong_phones"])
+            for n, t in r["people"].items():
+                people.setdefault(n, t)
+        ph, em = best_phone(counts, strong), best_email(emails, host)
     return {"website": base, "phone": ph, "email": em, "phone_src": src.get(ph, ""), "email_src": src.get(em, ""),
             "all_emails": emails[:8], "all_phones": [p for p, _ in counts.most_common(5)],
-            "people": people, "pages": sum(1 for _ in done)}
+            "people": people, "pages": len(done), "local": bool(ph) and ph[1:4] in LOCAL_AREA}
 
 
-def enrich(company, city, website, fetcher):
-    site = website or find_website(company, city)
+EMPTY = {"website": "", "phone": "", "email": "", "people": {}, "all_emails": [], "all_phones": [], "pages": 0, "local": False}
+
+
+def enrich(company, city, website, fetcher, trusted=False):
+    """Website (given, else searched) -> crawled contacts. A given website that does not look like the
+    company's own (e.g. a manufacturer's site on a dealer's posting) is ignored and searched instead."""
+    site = website if website and (trusted or name_matches(company, urlparse(website if "//" in website else "//" + website).netloc)) else ""
+    site = site or find_website(company, city)
     if not site:
-        return {"website": "", "phone": "", "email": "", "people": {}, "all_emails": [], "all_phones": [], "pages": 0, "note": "website not found"}
+        return {**EMPTY, "note": "website not found"}
     try:
         return crawl_site(site, fetcher)
     except Exception as e:
-        return {"website": site, "phone": "", "email": "", "people": {}, "all_emails": [], "all_phones": [], "pages": 0, "note": f"crawl error: {str(e)[:60]}"}
+        return {**EMPTY, "website": site, "note": f"crawl error: {str(e)[:60]}"}

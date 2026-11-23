@@ -80,16 +80,31 @@ def usajobs(keyword, location):
 
 
 # ---- JobSpy (open source): Indeed, ZipRecruiter, Google Jobs ----
-def jobspy(term, location, sites, results=60, hours_old=336):
+def _pay(lo, hi, interval):
+    """'$20-24/hr' style text from JobSpy's pay fields; '' when the posting lists no pay."""
+    try:
+        lo, hi = float(lo or 0), float(hi or 0)
+    except (TypeError, ValueError):
+        return ""
+    if not (lo or hi):
+        return ""
+    unit = {"hourly": "/hr", "yearly": "/yr", "monthly": "/mo", "weekly": "/wk", "daily": "/day"}.get(str(interval).lower(), "")
+    f = (lambda v: f"{v:,.0f}") if unit != "/hr" else (lambda v: f"{v:g}")
+    return f"${f(lo)}-{f(hi)}{unit}" if lo and hi and lo != hi else f"${f(lo or hi)}{unit}"
+
+
+def jobspy(term, location, sites, results=60, hours_old=336, distance=25):
     from jobspy import scrape_jobs  # pip install python-jobspy
     df = scrape_jobs(site_name=sites, search_term=term, location=location, results_wanted=results,
-                     hours_old=hours_old, country_indeed="USA", distance=35, verbose=0)
+                     hours_old=hours_old, country_indeed="USA", distance=distance, verbose=0)
     out = []
     for _, j in df.iterrows():
         g = lambda k: "" if k not in j or str(j[k]) in ("nan", "None", "NaT") else str(j[k])
-        out.append(dict(company=g("company"), title=g("title"), location=g("location"), url=g("job_url"),
-                        source={"indeed": "Indeed", "zip_recruiter": "ZipRecruiter", "google": "Google Jobs"}.get(g("site"), g("site")),
-                        posted=g("date_posted")[:10], website=g("company_url_direct"), emails=g("emails")))
+        out.append(dict(company=g("company"), title=g("title"), location=re.sub(r",\s*(USA?|United States)$", "", g("location")),
+                        url=g("job_url"), direct_url=g("job_url_direct"),
+                        source={"indeed": "Indeed", "zip_recruiter": "ZipRecruiter"}.get(g("site"), g("site")),
+                        posted=g("date_posted")[:10], website=g("company_url_direct"), emails=g("emails"),
+                        pay=_pay(g("min_amount"), g("max_amount"), g("interval")), description=g("description")[:8000]))
     return out
 
 
@@ -102,7 +117,7 @@ def collect(cfg):
     for loc in cfg["locations"]:
         for term in cfg["search_terms"]:
             if sites:
-                jobs += _safe(f"jobspy:{term}@{loc}", jobspy, term, loc, sites, cfg.get("results_per_search", 60))
+                jobs += _safe(f"jobspy:{term}@{loc}", jobspy, term, loc, sites, cfg.get("results_per_search", 60), cfg.get("max_days_old", 14) * 24, cfg.get("distance_miles", 25))
             jobs += _safe(f"adzuna:{term}@{loc}", adzuna, term, loc)
         for term in cfg.get("usajobs_terms", []):
             jobs += _safe(f"usajobs:{term}@{loc}", usajobs, term, loc)
