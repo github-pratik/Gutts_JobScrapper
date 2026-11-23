@@ -35,7 +35,8 @@ NOT_NAMES = set("""as our the and for with data management human resources missi
     operations services service team company group meet about contact vice chief executive senior general regional property
     properties business customer client office finance marketing sales board founder president owner director manager new
     north south east west united national american first capital community housing health care project construction
-    engineering facilities maintenance commercial residential plumbing heating cooling air conditioning mechanical""".split())
+    engineering facilities maintenance commercial residential plumbing heating cooling air conditioning mechanical
+    operator execution global technology resorts worldwide chair co hotels international associates partners""".split())
 LOW_VALUE = ("leave", "hrscleave", "benefit", "accommodat", "press", "media", "communications", "stratcom", "marketing", "investor", "legal", "webmaster", "sales", "news")
 LOCAL_AREA = {"703", "571", "202", "301", "240", "410", "443", "540", "804"}
 NOT_A_SITE = ("indeed.", "linkedin.", "facebook.", "yelp.", "glassdoor.", "ziprecruiter.", "bbb.org", "mapquest.",
