@@ -14,6 +14,7 @@ import yaml
 import contacts
 import jobs as jobsrc
 import quality
+import sharepoint
 import sheet
 
 
@@ -47,7 +48,10 @@ def main():
     cos = group(kept, cfg, today)
     print(f"    {len(raw)} raw -> {len(kept)} relevant -> {len(cos)} companies with entry/mid roles")
 
+    sp = sharepoint.connect()
     master = out / "master.csv"; seen = {}
+    if sp and sp.download(sharepoint.MASTER_PATH, master):
+        print("    loaded master list from SharePoint")
     if master.exists():
         seen = {r["key"]: r for r in csv.DictReader(open(master))}
     if cfg.get("only_new_companies") and not a.all:
@@ -105,6 +109,10 @@ def main():
         seen[norm(c["company"])].update(phone=c["phone"], email=c["email"], website=c["website"], last_seen=str(today))
     with open(master, "w", newline="") as fh:
         w = csv.DictWriter(fh, ["key", "company", "phone", "email", "website", "first_seen", "last_seen"]); w.writeheader(); w.writerows(seen.values())
+    if sp:
+        link = sp.upload(path, path.name)                       # new file each week, never overwrites
+        sp.upload(master, sharepoint.MASTER_PATH, overwrite=True)
+        print(f"    saved to SharePoint: {link}")
     if getattr(f, "errors", None):
         (out / "fetch_errors.log").write_text("\n".join(f.errors))
         print(f"    {len(f.errors)} page fetches failed (see out/fetch_errors.log)")

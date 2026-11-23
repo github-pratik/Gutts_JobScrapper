@@ -31,3 +31,9 @@ Edit `config.yaml`: locations, search terms, levels, employer career boards, kno
 - Business main lines and business emails only. No personal cell numbers.
 - Respects each website's robots.txt and pauses between pages. No logins, no CAPTCHA bypass, no LinkedIn.
 - Job boards can block or change; a blocked source is skipped and the run continues.
+
+## Saving to SharePoint (optional)
+Set these in the GitHub repo and each run saves a new dated sheet into the folder (it never overwrites a sheet people
+have typed in) and keeps `_engine/master.csv` there so only new companies appear each week.
+- Secrets: `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`
+- Variables: `SHAREPOINT_SITE_URL`, `SHAREPOINT_FOLDER`
