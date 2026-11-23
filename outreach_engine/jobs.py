@@ -133,7 +133,7 @@ def clean(jobs, cfg):
     seen, out = set(), []
     for j in jobs:
         co = re.sub(r"\s+", " ", j.get("company") or "").strip()
-        if not co or co.lower() in skip or not j.get("url"):
+        if not co or any(s in co.lower() for s in skip) or not j.get("url"):
             continue
         if not inc.search(j["title"]) or exc.search(j["title"]) or not area.search(j.get("location") or ""):
             continue

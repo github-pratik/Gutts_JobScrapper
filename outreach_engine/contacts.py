@@ -31,7 +31,12 @@ BAD_NAMES = {"Contact Us", "About Us", "Our Team", "Read More", "Learn More", "C
              "Air Conditioning", "Heating Cooling", "Privacy Policy", "Human Resources"}
 EMAIL_RANK = ["hr", "humanresources", "careers", "career", "jobs", "recruit", "talent", "hiring", "employment",
               "info", "contact", "office", "hello", "admin", "service", "sales"]
-LOW_VALUE = ("press", "media", "communications", "stratcom", "marketing", "investor", "legal", "webmaster", "sales", "news")
+NOT_NAMES = set("""as our the and for with data management human resources mission integration acquisitions development
+    operations services service team company group meet about contact vice chief executive senior general regional property
+    properties business customer client office finance marketing sales board founder president owner director manager new
+    north south east west united national american first capital community housing health care project construction
+    engineering facilities maintenance commercial residential plumbing heating cooling air conditioning mechanical""".split())
+LOW_VALUE = ("leave", "hrscleave", "benefit", "accommodat", "press", "media", "communications", "stratcom", "marketing", "investor", "legal", "webmaster", "sales", "news")
 LOCAL_AREA = {"703", "571", "202", "301", "240", "410", "443", "540", "804"}
 NOT_A_SITE = ("indeed.", "linkedin.", "facebook.", "yelp.", "glassdoor.", "ziprecruiter.", "bbb.org", "mapquest.",
               "zoominfo.", "yellowpages.", "angi.", "homeadvisor.", "thumbtack.", "instagram.", "twitter.", "x.com",
@@ -108,7 +113,7 @@ def parse_page(html):
         people[name] = title
     for title, name in P_TITLE_NAME.findall(text):
         people.setdefault(name, title)
-    people = {n: t for n, t in people.items() if n not in BAD_NAMES}
+    people = {n: t for n, t in people.items() if n not in BAD_NAMES and not (set(n.lower().replace(".", "").split()) & NOT_NAMES)}
 
     links = []
     for a in page.css("a"):
@@ -177,9 +182,13 @@ class Fetcher:
         if self.no_browser or not self.allowed(url):
             return None
         try:
-            from scrapling.fetchers import DynamicFetcher
+            import scrapling.fetchers as sf
+            browser = getattr(sf, "DynamicFetcher", None) or getattr(sf, "PlayWrightFetcher", None)
+            if browser is None:
+                self.no_browser = True
+                return None
             with self.browser_lock:
-                r = DynamicFetcher.fetch(url, headless=True, network_idle=True, timeout=30000)
+                r = browser.fetch(url, headless=True, network_idle=True, timeout=30000)
             return str(r.html_content) if r.status == 200 else None
         except Exception as e:
             self.errors.append(f"browser {url}: {str(e)[:120]}")

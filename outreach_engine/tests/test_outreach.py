@@ -43,6 +43,12 @@ class OutreachTests(unittest.TestCase):
         assert quality.level("HVAC Technician", "No experience necessary, we will train") == "Entry"
         assert quality.requirements("EPA 608 required. 2+ years of HVAC experience. Valid driver's license.") == "2+ yrs experience; EPA 608; Driver's license"
         assert quality.requirements("") == "" and quality.requirements(None) == ""
+        assert quality.level("Maintenance Technician", "entry-level. Requires 3+ years of experience") == "Mid"
+        assert quality.level("Maintenance Technician III", "we will train; 5+ years of experience") == "Senior"
+        assert quality.level("Plumbing Apprentice", "3 years of experience preferred") == "Entry"
+        assert quality.requirements("We will train. 3 years of experience") == "3+ yrs experience"
+        assert contacts.parse_page("<p>Data Management, Human Resources</p><p>Ann Lee, Owner</p>")["people"] == {"Ann Lee": "Owner"}
+        assert jobs.clean([dict(company="Cardinal Plumbing Heating & Air Inc.", title="Plumber", location="Sterling, VA", url="u")], yaml.safe_load(open(pathlib.Path(__file__).parent.parent / "config.yaml"))) == []
         assert quality.sector("Cardinal Plumbing Heating & Air Inc.", "Residential Service Plumber") == "Services"
         assert contacts.name_matches("Metropolitan Washington Airports Authority", "www.mwaa.com")
         assert not contacts.name_matches("Fairland Plumbing and Heating", "www.carrier.com")

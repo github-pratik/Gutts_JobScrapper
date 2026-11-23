@@ -30,11 +30,26 @@ TRADE = [("HVAC & Plumbing", r"(hvac|heating|cooling|air).*(plumb)|(plumb).*(hva
          ("Facility Maintenance", r"maintenance|building engineer|facilit|critical|data ?cent")]
 
 
+YEARS = re.compile(r"(\d{1,2})\s*\+?\s*(?:(?:-|to)\s*\d{1,2}\s*)?(?:years?|yrs?)[^.\n]{0,40}experience", re.I)
+
+
+def years_required(description):
+    """Smallest 'N years of experience' the posting asks for; None when it names none."""
+    found = [int(m) for m in YEARS.findall(description or "") if int(m) <= 15]
+    return min(found) if found else None
+
+
 def level(title, description=""):
-    """Entry / Mid / Senior from the title, with the posting text able to upgrade a plain title to Entry."""
+    """Entry / Mid / Senior. The title decides first; then the experience the posting asks for:
+    5+ years is Senior, 2-4 is Mid, and 'no experience / will train' wording upgrades a plain title to Entry."""
     if SENIOR.search(title) and not STARTER.search(title):
         return "Senior"
-    if NEEDS_EXP.search(title):
+    yrs = years_required(description)
+    if STARTER.search(title):
+        return "Entry"
+    if yrs is not None and yrs >= 5:
+        return "Senior"
+    if NEEDS_EXP.search(title) or (yrs is not None and yrs >= 2):
         return "Mid"
     if ENTRY.search(title) or DESC_ENTRY.search(description or ""):
         return "Entry"
@@ -45,11 +60,11 @@ def requirements(description):
     """Short flags a caller can read at a glance, pulled from the posting text."""
     d = description or ""
     out = []
-    if DESC_ENTRY.search(d):
+    yrs = years_required(d)
+    if yrs:
+        out.append(f"{yrs}+ yrs experience")
+    elif DESC_ENTRY.search(d):
         out.append("Will train / no experience")
-    m = re.search(r"(\d{1,2})\s*\+?\s*(?:-\s*\d{1,2}\s*)?(?:years?|yrs?)[^.\n]{0,40}experience", d, re.I)
-    if m and int(m.group(1)) <= 15:
-        out.append(f"{m.group(1)}+ yrs experience")
     if re.search(r"epa\s*(section\s*)?608|epa (universal|certif)", d, re.I):
         out.append("EPA 608")
     if re.search(r"driver.?s? licen[sc]e", d, re.I):

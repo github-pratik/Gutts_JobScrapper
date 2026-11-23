@@ -42,9 +42,9 @@ def collapse(jobs):
     out = []
     for group_ in by.values():
         first = max(group_, key=lambda j: j.get("posted", ""))
-        towns = list(dict.fromkeys(j["location"].split(",")[0].strip() for j in group_ if j["location"]))
+        towns = list(dict.fromkeys(t for t in (j["location"].split(",")[0].strip() for j in group_) if len(t) > 2))
         state = first["location"].split(",")[1].strip() if "," in first["location"] else ""
-        loc = first["location"] if len(towns) <= 1 else ", ".join(towns[:3]) + (f" +{len(towns) - 3} more" if len(towns) > 3 else "") + (f" ({state} area)" if state else "")
+        loc = (first["location"] if "," in first["location"] or not towns else towns[0]) if len(towns) <= 1 else ", ".join(towns[:3]) + (f" +{len(towns) - 3} more" if len(towns) > 3 else "") + (f" ({state} area)" if state else "")
         live = "Live" if any(j["live"] == "Live" for j in group_) else first["live"]
         out.append({**first, "location": loc, "live": live, "openings": len(group_)})
     return out
