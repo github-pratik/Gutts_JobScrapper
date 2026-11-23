@@ -30,6 +30,9 @@ jobs:
           MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
           SHAREPOINT_SITE_URL: ${{ vars.SHAREPOINT_SITE_URL }}
           SHAREPOINT_FOLDER: ${{ vars.SHAREPOINT_FOLDER }}
+      - name: Print results for review
+        if: always()
+        run: cat out/postings_*.csv; echo ----MASTER----; cat out/master.csv; echo ----ERRORS----; head -c 6000 out/fetch_errors.log 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
