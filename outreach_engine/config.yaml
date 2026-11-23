@@ -1,0 +1,45 @@
+# GUTTS outreach engine settings. Edit this file to change what gets searched. No passwords or keys go in here.
+locations: ["Fairfax, VA", "Washington, DC", "Ashburn, VA", "Manassas, VA", "Rockville, MD"]
+
+# Roles a 72-hour pre-apprenticeship grad (EPA 608, OSHA, own tool bag) can realistically land, entry first.
+search_terms:
+  - HVAC helper
+  - HVAC apprentice
+  - HVAC installer
+  - HVAC technician
+  - plumber helper
+  - plumbing apprentice
+  - plumber
+  - maintenance technician
+  - building engineer
+  - facilities technician
+  - data center technician
+usajobs_terms: ["HVAC", "plumber", "maintenance mechanic"]
+
+jobspy_sites: [indeed, zip_recruiter]   # open-source JobSpy. Google Jobs is unavailable in JobSpy right now.
+results_per_search: 60
+max_days_old: 14
+levels: [Entry, Mid]            # Senior roles are dropped
+only_new_companies: true        # skip companies already on a past sheet (master.csv)
+max_companies: 150
+workers: 8                      # companies crawled at the same time
+delay_seconds: 1.0              # pause between pages on the same website
+
+title_include: "hvac|plumb|pipe ?fitt|refriger|chiller|boiler|maintenance (tech|mech|engineer)|building (engineer|maintenance)|facilit(y|ies) (tech|engineer|maintenance)|critical (facilit|environment)|data cent(er|re) (tech|facilit|oper|engineer)|apprentice|mechanic(al)? (helper|tech)|service tech|installer|stationary engineer"
+title_exclude: "software|sales|account|market|nurse|driver|cdl|electric(al|ian) (only|engineer)|design engineer|estimator|project manager|director|vp|vice president|recruit|intern\\b|customer service|dispatcher|warehouse|aircraft|aviation|automotive|auto tech|network|security officer|janitor|housekeep|cook|IT support"
+area_regex: "\\b(VA|MD|DC|Virginia|Maryland|District of Columbia|Washington)\\b"
+
+skip_companies: ["Confidential", "Indeed", "CyberCoders", "Aerotek", "Insight Global", "Robert Half", "TEKsystems", "Randstad", "Adecco", "Kelly Services", "Jobot", "Actalent", "Tradesmen International"]
+
+# Public career boards of local employers (free, always live). Add more as you find them.
+ats_boards:
+  - {company: Seatown, type: greenhouse, token: seatown}
+  - {company: LightEdge, type: lever, token: lightedge}
+  - {company: Novo, type: workable, token: novo}
+
+# Websites we already know, so no search is needed.
+known_websites:
+  KETTLER: https://www.kettler.com
+  John Akridge Co: https://akridge.com
+  Planned Companies: https://www.plannedcompanies.com
+  William C. Smith & Co: https://www.wcsmith.com

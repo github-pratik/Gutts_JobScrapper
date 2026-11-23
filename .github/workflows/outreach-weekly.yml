@@ -1,0 +1,35 @@
+name: Weekly employer outreach sheet
+on:
+  schedule: [{cron: "30 11 * * 1"}]   # Mondays ~6:30 AM Eastern (runs once this file is on main)
+  workflow_dispatch: {}
+  push:
+    branches: [outreach-engine]       # test runs while this lives on a branch
+    paths: ["outreach_engine/**", ".github/workflows/outreach-weekly.yml"]
+permissions:
+  contents: read
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run: {working-directory: outreach_engine}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r requirements.txt
+      - run: python -m unittest tests/test_outreach.py
+      - run: python run.py --limit ${{ github.event_name == 'push' && '25' || '150' }}
+        env:
+          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
+          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          USAJOBS_API_KEY: ${{ secrets.USAJOBS_API_KEY }}
+          USAJOBS_EMAIL: ${{ secrets.USAJOBS_EMAIL }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: call-sheet
+          path: |
+            outreach_engine/out/*.xlsx
+            outreach_engine/out/*.csv
+            outreach_engine/out/*.log

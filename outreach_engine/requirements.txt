@@ -1,0 +1,6 @@
+scrapling[fetchers]
+python-jobspy
+ddgs
+requests
+pyyaml
+openpyxl

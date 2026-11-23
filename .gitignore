@@ -19,3 +19,6 @@ data/input/*.xls
 # Local/editor
 .cursor/
 .vscode/
+
+# Outreach engine outputs (never commit scraped data)
+outreach_engine/out/
