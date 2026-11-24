@@ -61,9 +61,13 @@ def main():
     cfg = yaml.safe_load(open(a.config)); today = datetime.date.today()
     out = Path(a.out); out.mkdir(exist_ok=True)
 
+    f = contacts.Fetcher(cache_dir=str(out / "cache"), delay=cfg["delay_seconds"])
     print("1/4 Collecting postings")
-    raw = jobsrc.collect(cfg)
+    raw = jobsrc.collect(cfg, f)
     kept = jobsrc.clean(raw, cfg)
+    by = lambda js: ", ".join(f"{k} {v}" for k, v in collections.Counter(j["source"] for j in js).most_common())
+    print(f"    by source, raw: {by(raw)}")
+    print(f"    by source, relevant: {by(kept)}")
     cos = group(kept, cfg, today)
     print(f"    {len(raw)} raw -> {len(kept)} relevant -> {len(cos)} companies with entry/mid roles")
 
@@ -81,7 +85,6 @@ def main():
     order = order[: a.limit or cfg["max_companies"]]
 
     print(f"2/4 Checking postings are live + finding contacts for {len(order)} companies")
-    f = contacts.Fetcher(cache_dir=str(out / "cache"), delay=cfg["delay_seconds"])
     known = {norm(k): v for k, v in (cfg.get("known_websites") or {}).items()}
 
     def status(url):
@@ -103,6 +106,13 @@ def main():
         city = co["jobs"][0]["location"].split(",")[0]
         kw = known.get(norm(co["company"]))
         e = contacts.enrich(co["company"], city, kw or co["website"], f, trusted=bool(kw))
+        have = {j["title"].lower() for j in co["jobs"]}
+        for hit in {h for h in map(jobsrc.detect_board, e.get("boards", [])) if h}:  # the employer's own careers board
+            extra = [j for j in jobsrc.clean(jobsrc.board_jobs(co["company"], *hit), cfg) if j["title"].lower() not in have]
+            for j in extra:
+                j["level"] = quality.level(j["title"], j.get("description", ""))
+                j["live"], j["requirements"] = "Live", quality.requirements(j.get("description", ""))
+            co["jobs"] += collapse([j for j in extra if j["level"] in cfg["levels"]])
         titles = " ".join(j["title"] for j in co["jobs"])
         people = list(e["people"].items())
         posted = [m.strip() for j in co["jobs"] for m in (j.get("emails") or "").split(",")

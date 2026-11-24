@@ -18,6 +18,18 @@ usajobs_terms: ["HVAC", "plumber", "maintenance mechanic"]
 
 jobspy_sites: [indeed, zip_recruiter]   # open-source JobSpy. Google Jobs is unavailable in JobSpy right now.
 results_per_search: 60
+
+# iHireConstruction search pages to read (title-state-city pattern from their site). Add or remove pages freely.
+ihire_pages:
+  - https://www.ihireconstruction.com/t-hvac-mechanic-s-virginia-c-fairfax-jobs.html
+  - https://www.ihireconstruction.com/t-hvac-technician-s-virginia-c-fairfax-jobs.html
+  - https://www.ihireconstruction.com/t-hvac-installer-s-virginia-c-fairfax-jobs.html
+  - https://www.ihireconstruction.com/t-plumber-s-virginia-c-fairfax-jobs.html
+  - https://www.ihireconstruction.com/t-apprentice-plumber-s-virginia-c-fairfax-jobs.html
+  - https://www.ihireconstruction.com/t-maintenance-technician-s-virginia-c-fairfax-jobs.html
+  - https://www.ihireconstruction.com/t-hvac-mechanic-s-maryland-c-rockville-jobs.html
+  - https://www.ihireconstruction.com/t-plumber-s-maryland-c-rockville-jobs.html
+ihire_max_jobs: 80
 max_days_old: 14
 distance_miles: 25              # search radius around each location
 levels: [Entry, Mid]            # Senior roles are dropped

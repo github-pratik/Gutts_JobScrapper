@@ -121,7 +121,9 @@ def parse_page(html):
         h = a.attrib.get("href", "")
         if h and not h.startswith(("mailto:", "tel:", "#", "javascript:")) and LINK_WORDS.search(h + " " + (a.text or "")):
             links.append(h)
-    return {"emails": emails, "phones": phones, "strong_phones": list(dict.fromkeys(strong)), "people": people, "links": links}
+    boards = [u for u in hrefs + page.css("iframe::attr(src)").getall() + page.css("script::attr(src)").getall()
+              if re.search(r"greenhouse\.io|lever\.co|workable\.com|ashbyhq\.com|smartrecruiters\.com|recruitee\.com|myworkdayjobs\.com", u)]
+    return {"emails": emails, "phones": phones, "strong_phones": list(dict.fromkeys(strong)), "people": people, "links": links, "boards": boards}
 
 
 def best_email(emails, host):
@@ -270,7 +272,7 @@ def crawl_site(base, fetcher, max_pages=8):
         base = "https://" + base
     host = urlparse(base).netloc
     queue, done = [base], []
-    emails, people, counts, strong, src = [], {}, Counter(), set(), {}
+    emails, people, counts, strong, src, boards = [], {}, Counter(), set(), {}, []
     guessed = False
     while queue and len(done) < max_pages:
         url = queue.pop(0)
@@ -286,6 +288,7 @@ def crawl_site(base, fetcher, max_pages=8):
             for p in r["phones"]:
                 counts[p] += 1; src.setdefault(p, url)
             strong |= set(r["strong_phones"])
+            boards += r.get("boards", [])
             for n, t in r["people"].items():
                 people.setdefault(n, t)
             for h in r["links"]:
@@ -315,10 +318,10 @@ def crawl_site(base, fetcher, max_pages=8):
         ph, em = best_phone(counts, strong), best_email(emails, host)
     return {"website": base, "phone": ph, "email": em, "phone_src": src.get(ph, ""), "email_src": src.get(em, ""),
             "all_emails": emails[:8], "all_phones": [p for p, _ in counts.most_common(5)],
-            "people": people, "pages": len(done), "local": bool(ph) and ph[1:4] in LOCAL_AREA}
+            "people": people, "pages": len(done), "local": bool(ph) and ph[1:4] in LOCAL_AREA, "boards": boards}
 
 
-EMPTY = {"website": "", "phone": "", "email": "", "people": {}, "all_emails": [], "all_phones": [], "pages": 0, "local": False}
+EMPTY = {"website": "", "phone": "", "email": "", "people": {}, "all_emails": [], "all_phones": [], "pages": 0, "local": False, "boards": []}
 
 
 def enrich(company, city, website, fetcher, trusted=False):

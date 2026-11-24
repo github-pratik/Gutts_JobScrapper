@@ -100,7 +100,7 @@ def is_fresh(posted, today, max_days):
         return True  # no date given: keep, the live check decides
 
 
-BOARDS = ("Indeed", "ZipRecruiter", "Adzuna")
+BOARDS = ("Indeed", "ZipRecruiter", "Adzuna", "iHireConstruction")
 
 
 def check_live(job, get_status):
@@ -109,7 +109,7 @@ def check_live(job, get_status):
     Active  - the job board returned it in today's search results, but blocks automated page checks
     Expired - dead link or 'no longer available' text (these are dropped)
     Board feeds (Greenhouse, Lever, Workable, USAJobs) only list open jobs, so they are Live by definition."""
-    if job["source"] in ("Greenhouse", "Lever", "Workable", "USAJobs"):
+    if job["source"] in ("Greenhouse", "Lever", "Workable", "Ashby", "SmartRecruiters", "Recruitee", "Workday", "USAJobs"):
         return "Live"
     for url in [u for u in (job.get("direct_url"), job["url"]) if u]:
         status, text = get_status(url)
