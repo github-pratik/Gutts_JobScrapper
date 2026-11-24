@@ -277,6 +277,8 @@ def collect(cfg, fetcher=None):
     known = {(b["type"], b["token"]) for b in cfg.get("ats_boards", [])}
     # employers' own hiring boards, found via the apply links of postings that already passed the filters
     for (kind, token), company in discover_boards(clean(list(jobs), cfg)).items():
+        if kind == "workday" and not cfg.get("discover_workday", False):
+            continue  # Workday rate-limits shared servers hard (most calls refused, ~25 extra minutes): off unless enabled
         if (kind, token) not in known:
             print(f"  discovered board: {company} -> {kind}:{token}")
             jobs += board_jobs(company, kind, token)

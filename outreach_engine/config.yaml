@@ -47,6 +47,8 @@ metro_towns: [Washington, Fairfax, Arlington, Alexandria, Reston, Herndon, Sterl
 skip_companies: ["Confidential", "Indeed", "CyberCoders", "Aerotek", "Insight Global", "Robert Half", "TEKsystems", "Randstad", "Adecco", "Kelly Services", "Jobot", "Actalent", "Tradesmen International",
   "Cardinal Plumbing"]   # names here are removed from every sheet (matches any company containing the text)
 
+discover_workday: false   # true = also read employers' Workday boards (slow: adds ~25 min, most calls get refused)
+
 # Public career boards of local employers (free, always live). Add more as you find them.
 ats_boards:
   - {company: Seatown, type: greenhouse, token: seatown}
