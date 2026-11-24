@@ -22,13 +22,9 @@ results_per_search: 60
 # iHireConstruction search pages to read (title-state-city pattern from their site). Add or remove pages freely.
 ihire_pages:
   - https://www.ihireconstruction.com/t-hvac-mechanic-s-virginia-c-fairfax-jobs.html
-  - https://www.ihireconstruction.com/t-hvac-technician-s-virginia-c-fairfax-jobs.html
-  - https://www.ihireconstruction.com/t-hvac-installer-s-virginia-c-fairfax-jobs.html
-  - https://www.ihireconstruction.com/t-plumber-s-virginia-c-fairfax-jobs.html
-  - https://www.ihireconstruction.com/t-apprentice-plumber-s-virginia-c-fairfax-jobs.html
-  - https://www.ihireconstruction.com/t-maintenance-technician-s-virginia-c-fairfax-jobs.html
   - https://www.ihireconstruction.com/t-hvac-mechanic-s-maryland-c-rockville-jobs.html
-  - https://www.ihireconstruction.com/t-plumber-s-maryland-c-rockville-jobs.html
+  - https://www.ihireconstruction.com/t-hvac-mechanic-s-district-of-columbia-c-washington-jobs.html
+  - https://www.ihireconstruction.com/t-plumber-s-virginia-c-fairfax-jobs.html
 ihire_max_jobs: 80
 max_days_old: 14
 distance_miles: 25              # search radius around each location
@@ -41,6 +37,12 @@ delay_seconds: 1.0              # pause between pages on the same website
 title_include: "hvac|plumb|pipe ?fitt|refriger|chiller|boiler|maintenance (tech|mech|engineer)|building (engineer|maintenance)|facilit(y|ies) (tech|engineer|maintenance)|critical (facilit|environment)|data cent(er|re) (tech|facilit|oper|engineer)|apprentice|mechanic(al)? (helper|tech)|service tech|installer|stationary engineer"
 title_exclude: "software|sales|account|market|nurse|driver|cdl|electric(al|ian) (only|engineer)|design engineer|estimator|project manager|director|vp|vice president|recruit|intern\\b|customer service|dispatcher|warehouse|aircraft|aviation|automotive|auto tech|network|material handling|production|manufactur|industrial|electrical mechanical|fleet|security officer|trash|compactor|janitor|housekeep|cook|IT support"
 area_regex: "\\b(VA|MD|DC|Virginia|Maryland|District of Columbia|Washington)\\b"
+
+# Employer hiring boards list every city the company hires in. Only these DC-metro towns are kept from them.
+metro_towns: [Washington, Fairfax, Arlington, Alexandria, Reston, Herndon, Sterling, Ashburn, Leesburg, Manassas, Chantilly,
+  Centreville, Vienna, McLean, Mc Lean, Tysons, Falls Church, Springfield, Woodbridge, Lorton, Dulles, Gainesville, Annandale,
+  Burke, Oakton, Merrifield, Dumfries, Haymarket, Rockville, Bethesda, Silver Spring, Gaithersburg, Germantown, Laurel,
+  College Park, Bowie, Landover, Hyattsville, Greenbelt, Beltsville, Potomac, Wheaton, Olney, Waldorf, Upper Marlboro, Largo]
 
 skip_companies: ["Confidential", "Indeed", "CyberCoders", "Aerotek", "Insight Global", "Robert Half", "TEKsystems", "Randstad", "Adecco", "Kelly Services", "Jobot", "Actalent", "Tradesmen International",
   "Cardinal Plumbing"]   # names here are removed from every sheet (matches any company containing the text)

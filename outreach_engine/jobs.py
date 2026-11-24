@@ -3,6 +3,8 @@
 A source that fails or is not installed/configured returns [] and prints why - it never stops the run."""
 import os
 import re
+import time
+
 import requests
 
 UA = {"User-Agent": "Mozilla/5.0 (compatible; GUTTS-Outreach/1.0; +https://gutts.tech)"}
@@ -76,8 +78,13 @@ def workday(company, token, terms=("HVAC", "plumber", "maintenance technician", 
     base = f"https://{tenant}.{wd}.myworkdayjobs.com"
     out = []
     for term in terms:
-        r = requests.post(f"{base}/wday/cxs/{tenant}/{site}/jobs", timeout=T, headers={**UA, "Content-Type": "application/json"},
-                          json={"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": term})
+        for attempt in (1, 2):  # Workday shares one rate limit across employers: go slowly, retry once
+            time.sleep(2 * attempt)
+            r = requests.post(f"{base}/wday/cxs/{tenant}/{site}/jobs", timeout=T, headers={**UA, "Content-Type": "application/json"},
+                              json={"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": term})
+            if r.status_code != 429:
+                break
+            time.sleep(20)
         r.raise_for_status()
         out += [dict(company=company, title=x["title"], location=x.get("locationsText", ""),
                      url=f"{base}/en-US/{site}{x['externalPath']}", source="Workday", posted="")
@@ -268,7 +275,8 @@ def collect(cfg, fetcher=None):
     if fetcher and cfg.get("ihire_pages"):
         jobs += _safe("ihire", ihire, cfg["ihire_pages"], fetcher, cfg.get("ihire_max_jobs", 80))
     known = {(b["type"], b["token"]) for b in cfg.get("ats_boards", [])}
-    for (kind, token), company in discover_boards(jobs).items():  # employers' own hiring boards, found via apply links
+    # employers' own hiring boards, found via the apply links of postings that already passed the filters
+    for (kind, token), company in discover_boards(clean(list(jobs), cfg)).items():
         if (kind, token) not in known:
             print(f"  discovered board: {company} -> {kind}:{token}")
             jobs += board_jobs(company, kind, token)
@@ -281,6 +289,8 @@ def clean(jobs, cfg):
     exc = re.compile(cfg["title_exclude"], re.I)
     area = re.compile(cfg["area_regex"], re.I)
     skip = {c.lower() for c in cfg.get("skip_companies", [])}
+    metro = re.compile("|".join(re.escape(t) for t in cfg.get("metro_towns", [])) or "$^", re.I)
+    radius_sources = ("Indeed", "ZipRecruiter", "Adzuna", "USAJobs", "iHireConstruction")  # these already search by distance
     seen, out = set(), []
     for j in jobs:
         co = re.sub(r"\s+", " ", j.get("company") or "").strip()
@@ -288,6 +298,8 @@ def clean(jobs, cfg):
             continue
         if not inc.search(j["title"]) or exc.search(j["title"]) or not area.search(j.get("location") or ""):
             continue
+        if j.get("source") not in radius_sources and cfg.get("metro_towns") and not metro.search(j.get("location") or ""):
+            continue  # an employer's board lists every city it hires in: keep only DC-metro towns
         k = (co.lower(), j["title"].lower(), (j.get("location") or "").lower())
         if k in seen:
             continue

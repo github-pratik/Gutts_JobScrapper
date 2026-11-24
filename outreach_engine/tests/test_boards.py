@@ -47,6 +47,14 @@ class BoardTests(unittest.TestCase):
         out = jobs.ihire(["L", "missing"], f)
         self.assertEqual([(j["company"], j["url"]) for j in out], [("Acme HVAC", base + "/jobs/view/111")])
 
+    def test_board_jobs_outside_metro_are_dropped(self):
+        import yaml
+        cfg = yaml.safe_load(open(pathlib.Path(__file__).parent.parent / "config.yaml"))
+        rows = [dict(company="ColonialWebb", title="Plumbing Helper", location="Richmond, VA", url="u1", source="Workday"),
+                dict(company="ColonialWebb", title="Plumbing Helper", location="Sterling, VA", url="u2", source="Workday"),
+                dict(company="Acme", title="Plumber Helper", location="Richmond, VA", url="u3", source="Indeed")]
+        self.assertEqual([j["url"] for j in jobs.clean(rows, cfg)], ["u2", "u3"])   # radius sources are trusted as-is
+
     def test_board_readers(self):
         with mock.patch("jobs._get", return_value={"jobs": [{"title": "Tech", "location": "Reston, VA", "jobUrl": "u", "publishedAt": "2026-11-01T00:00"}]}):
             self.assertEqual(jobs.ashby("A", "a")[0]["posted"], "2026-11-01")
